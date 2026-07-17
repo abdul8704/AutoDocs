@@ -1,15 +1,21 @@
 import express from "express";
 import { env } from "./config/env"
-import { asyncHandler } from "./utils/asyncHandler.utils"
 import { logger } from "./utils/logger.utils"
+import { errorMiddleware } from "./middleware/error.middleware"
+import githubRouter from "./routes/webhook.routes"
+import dotenv from "dotenv";
+dotenv.config();
 
 const app = express();
+app.use(express.json());
 
-app.use(asyncHandler)
+app.use("/webhooks", githubRouter);
 
 app.get("/health", ( _req, res) => {
-    res.status(200).json({ message: "server running" })
+    res.send("yarupa nee")
 });
+
+app.use(errorMiddleware);
 
 const PORT: number = Number(env.PORT) || 5000
 
