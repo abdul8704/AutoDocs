@@ -2,4 +2,5 @@ node_modules
 dist
 codebases
 .env
-.dockerignore
+/src/generated/prisma
+.vscode

@@ -1,19 +1,114 @@
 import simpleGit from "simple-git"
 import fs from "fs/promises";
 import { createPath } from "../utils/pathHelper.utils";
-import { CodebaseChangeEvent } from "../types/repo.types";
+import { CodebaseChangeEvent, GitFetchResponse } from "../types/repo.types";
 import { constructPath } from "../utils/pathHelper.utils"
+import prisma from "../prisma/prisma";
 
 const git = simpleGit();
 
-export const cloneNewRepo = async (event: CodebaseChangeEvent, repoName: string) => {
-    const path = constructPath(repoName);
+// clone the repo into our base
+export const cloneNewRepo = async (event: CodebaseChangeEvent) => {
+    // creates path like codebases/<repo_id>/
+    const path = constructPath(event.repo.id);
     await git.clone(event.repo.clone_url, path);
 }
 
+// check if the repo already exists in our local base
 export const checkIfRepoExists = async (repoName: string): Promise<boolean> => {
     const path = createPath("codebases", repoName);
 
     const stats = await fs.stat(path);
     return stats.isDirectory(); 
 }
+
+export const fetchAndClassify = async (event: CodebaseChangeEvent, repoName: string) => {
+    const repoUrl: string = event.repo.clone_url;
+    const fetchResult: GitFetchResponse = await git.fetch(repoUrl, "main");
+
+    
+    // do git fetch
+    // get our commit id from db
+    // compare it with afterSHA in the event object with git DIFF
+    // send diff file, docs, repo tree to LLM for classification
+
+    // return LLM decision
+
+
+    // if LLM says no updation, update db to this commit
+    // if LLM saya updation needed, do "git merge", send new files, docs to LLM and update new docs
+}
+
+export const githubHandlerService = async (event: CodebaseChangeEvent) => {
+    // check if repo id is there in db
+    const repoId = event.repo.id;
+    const repo = await prisma.repo.findUnique({
+        where: {
+            id: repoId
+        }
+    })
+
+    if(repo === null){
+        // write the repoId to db
+        await prisma.repo.create({
+            user_id: "1",
+            github_repo_id: repoId,
+            cloneUrl: event.repo.clone_url,
+        })
+
+        // clone the repo
+        await cloneNewRepo(event);
+        // TODO: cook with LLM
+
+    }
+    else{
+        // check if local copy exists
+        const exists = await checkIfRepoExists(event.repo.full_name);
+
+        if(exists){
+            // fetch the latest commits and compare with db commit
+            const path = constructPath(event.repo.id);
+            const gitRepo = simpleGit(path);
+
+            await gitRepo.fetch();
+            const oldCommit = repo.last_processed_commit;
+            const newCommit = event.head_commit.id;
+            const commitMessage = event.head_commit.message;
+
+            if(oldCommit === newCommit)
+                return;
+            
+            // get the patch of the diff (one large string containing all the changes)
+            const patch = await gitRepo.diff([
+                oldCommit,
+                newCommit
+            ]);
+
+            // diff of only new file names of added or modified or deleted files
+            const filesChanged = await gitRepo.diff([
+                "--name-status",
+                oldCommit,
+                newCommit
+            ]);
+
+            // TODO: Invoke LLM to compare patch and docs of repo to see if repo needs docs updation
+            // TODO: If docs need updation, cook with LLM
+    
+        }
+        else{
+            // clone anew
+            await cloneNewRepo(event); 
+        }
+    }
+}
+
+function main(){
+    const a = async () => {
+        const k = await git.fetch("https://github.com/abdul8704/dsa-mentor-worker.git", "main");
+
+        console.log(k.branches, k.tags, k.updated, k.deleted)
+    }
+    a();
+}
+
+main()

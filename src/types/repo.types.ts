@@ -3,10 +3,10 @@ export interface CodebaseChangeEvent {
     before: string;
     after: string;
     repo: {
-        id: number;
+        id: string;
         name: string;
         full_name: string;
-        owner:{
+        owner: {
             name: string;
             email: string;
         }
@@ -20,4 +20,26 @@ export interface CodebaseChangeEvent {
         modified: string[];
         removed: string[];
     }
+}
+
+export interface GitFetchResponse {
+    raw: string;
+    remote: string | null;
+    branches: {
+        name: string;
+        tracking: string;
+    }[];
+    tags: {
+        name: string;
+        tracking: string;
+    }[];
+    updated: {
+        name: string;
+        tracking: string;
+        to: string;
+        from: string;
+    }[];
+    deleted: {
+        tracking: string;
+    }[];
 }
