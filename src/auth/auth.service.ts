@@ -1,103 +1,115 @@
-import axios from "axios";
-import { env } from "../config/env"
+import { randomUUID } from "crypto";
+import bcrypt from "bcrypt";
 import prisma from "../prisma/prisma";
+import {
+    generateAccessToken,
+    generateRefreshToken,
+    verifyRefreshToken,
+} from "./jwt.service";
+import { OAuthProfile } from "./providers/provider.types";
+import { HttpError } from "../utils/httpError.utils";
 
-export const exchangeCodeForToken = async (code: string): Promise<string> => {
-        const clientId = env.GITHUB_CLIENT_ID;
-        const clientSecret = env.GITHUB_CLIENT_SECRET;
+const BCRYPT_ROUNDS = 10;
 
-        const token = await axios.post(
-            "https://github.com/login/oauth/access_token",
-            {
-                code,
-                client_id: clientId,
-                client_secret: clientSecret,
-            },
-            {
-                headers: {
-                    Accept: 'application/json'
-                }
-            }
-        );
-
-        const accessToken = token.data.access_token;
-        return accessToken;
-}
-
-export const getGithubAuthUrl = (): string => {
-    const clientId = env.GITHUB_CLIENT_ID;
-    const redirectUrl = `${env.SERVER_URL}/auth/github/callback`
-
-    const url = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUrl}&scope=user:email`;
-    return url;
-}
-
-export const getUserData = async (token: string) => {
-    const response = await axios.get(
-        "https://api.github.com/user", {
-            headers: {
-                Authorization: `Bearer ${token}`,
-                Accept: "application/vnd.github+json"
-            }
-        }
-    );
-
-    const userData = {
-        ...response.data,
-        id: response.data.id.toString()
-    }
-
-    if(!userData.email || userData.email === ""){
-        userData.email = await getUserEmail(token);
-    }
-
-    let user = await findUserById(userData.id.toString());
-
-    if(!user){
-        user = await createNewUser(userData.name, userData.id, userData.email);
-    }
-
-    return user;
-}
-
-const getUserEmail = async (token: string): Promise<string> => {
-    const response = await axios.get(
-        "https://api.github.com/user/emails", {
-            headers: {
-                Authorization: `Bearer ${token}`,
-                Accept: "application/vnd.github+json"
-            }
-        }
-    );
-    const primaryEmail = response.data.find(
-        (email: any) => email.primary
-    )
-
-    return primaryEmail.email;
-}
-
-const findUserById = async (id: string) => {
-    console.log(id, typeof id);
-    const user = await prisma.user.findUnique({
-        where: {
-            githubId: id
-        }
+// Finds an existing GitHub-linked user or creates one. This is the one piece that's
+// tied to the `githubId` column in the schema - a future Google provider would need
+// its own equivalent (e.g. a `googleId` column) and lookup/creation function.
+export const findOrCreateGithubUser = async (profile: OAuthProfile) => {
+    const existing = await prisma.user.findUnique({
+        where: { githubId: profile.providerId },
     });
 
-    if(!user)
-        return null;
+    if (existing) {
+        return existing;
+    }
 
-    return user;
-}
-
-const createNewUser = async (name: string, githubId: string, email: string) => {
-    const write = await prisma.user.create({
+    return prisma.user.create({
         data: {
-            name: name,
-            githubId: githubId,
-            email: email
-        }
+            name: profile.name,
+            githubId: profile.providerId,
+            email: profile.email,
+        },
+    });
+};
+
+// Issues a fresh access token + refresh token pair for a user and persists a
+// RefreshSession row (keyed by the same id embedded in the refresh JWT) so the
+// refresh token can be looked up and revoked later without scanning every session.
+export const setUpJwt = async (userId: string) => {
+    const accessToken = generateAccessToken(userId);
+
+    const sessionId = randomUUID();
+    const { refreshJWT: refreshToken, expiresAt } = generateRefreshToken(userId, sessionId);
+    const hashedRefreshToken = await bcrypt.hash(refreshToken, BCRYPT_ROUNDS);
+
+    await prisma.refreshSession.create({
+        data: {
+            id: sessionId,
+            userId,
+            hashedRefreshToken,
+            expiresAt,
+        },
     });
 
-    return write;
-}
+    return { accessToken, refreshToken, expiresAt };
+};
+
+// Verifies a refresh token against its stored, hashed session and - if it's valid,
+// not revoked, and not expired - issues a brand new access token.
+export const refreshAccessToken = async (rawRefreshToken: string): Promise<string> => {
+    // `verifyRefreshToken` throws a raw jsonwebtoken error (not an HttpError) when the
+    // token is malformed/expired/signed with a different secret. This is the one
+    // unavoidable translation boundary to our typed HttpError - everything else below
+    // throws HttpError directly and needs no local catch.
+    let payload;
+    try {
+        payload = verifyRefreshToken(rawRefreshToken);
+    } catch {
+        throw new HttpError(401, "Invalid or expired refresh token");
+    }
+
+    const session = await prisma.refreshSession.findUnique({
+        where: { id: payload.sessionId },
+    });
+
+    if (!session || session.userId !== payload.userId) {
+        throw new HttpError(401, "Refresh session not found");
+    }
+
+    if (session.revokedAt) {
+        throw new HttpError(401, "Refresh token has been revoked");
+    }
+
+    if (session.expiresAt < new Date()) {
+        throw new HttpError(401, "Refresh token has expired");
+    }
+
+    const isValid = await bcrypt.compare(rawRefreshToken, session.hashedRefreshToken);
+    if (!isValid) {
+        throw new HttpError(401, "Refresh token does not match stored session");
+    }
+
+    return generateAccessToken(payload.userId);
+};
+
+// Revokes the refresh session tied to this token, e.g. on logout. Best-effort: if the
+// token is already invalid/expired there's nothing left to revoke, so it silently no-ops.
+export const revokeRefreshToken = async (rawRefreshToken: string): Promise<void> => {
+    let payload;
+    try {
+        payload = verifyRefreshToken(rawRefreshToken);
+    } catch {
+        return;
+    }
+
+    await prisma.refreshSession.updateMany({
+        where: {
+            id: payload.sessionId,
+            userId: payload.userId,
+            revokedAt: null,
+        },
+        data: {
+            revokedAt: new Date(),
+        },
+    });
+};

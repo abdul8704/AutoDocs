@@ -15,7 +15,8 @@ const envSchema = z.object({
     JWT_REFRESH_SECRET: z.string(),
     ACCESS_TOKEN_EXPIRY: z.string(),
     REFRESH_TOKEN_EXPIRY: z.string(),
-    SERVER_URL: z.url()
+    SERVER_URL: z.url(),
+    CLIENT_URL: z.url()
 });
 
 export const env = envSchema.parse(process.env);

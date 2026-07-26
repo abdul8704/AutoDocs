@@ -1,8 +1,14 @@
 import jwt, { SignOptions } from "jsonwebtoken";
 import { env } from "../config/env";
+import ms from "ms";
 
-type JwtPayload = {
+type AccessTokenPayload = {
     userId: string;
+};
+
+type RefreshTokenPayload = {
+    userId: string;
+    sessionId: string;
 };
 
 export const generateAccessToken = (userId: string) => {
@@ -15,26 +21,33 @@ export const generateAccessToken = (userId: string) => {
     );
 };
 
-export const generateRefreshToken = (userId: string) => {
-    return jwt.sign(
-        { userId },
+export const generateRefreshToken = (userId: string, sessionId: string) => {
+    const expiresIn = env.REFRESH_TOKEN_EXPIRY as ms.StringValue;
+
+    const refreshJWT = jwt.sign(
+        { userId, sessionId },
         env.JWT_REFRESH_SECRET,
-        {
-            expiresIn: env.REFRESH_TOKEN_EXPIRY as SignOptions["expiresIn"]
-        }
+        { expiresIn }
     );
+
+    const expiresAt = new Date(Date.now() + ms(expiresIn));
+
+    return {
+        refreshJWT,
+        expiresAt,
+    };
 };
 
-export const verifyAccessToken = (token: string): JwtPayload => {
+export const verifyAccessToken = (token: string): AccessTokenPayload => {
     return jwt.verify(
         token,
         env.JWT_ACCESS_SECRET
-    ) as JwtPayload;
+    ) as AccessTokenPayload;
 };
 
-export const verifyRefreshToken = (token: string): JwtPayload => {
+export const verifyRefreshToken = (token: string): RefreshTokenPayload => {
     return jwt.verify(
         token,
         env.JWT_REFRESH_SECRET
-    ) as JwtPayload;
+    ) as RefreshTokenPayload;
 };
