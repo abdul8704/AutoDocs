@@ -5,22 +5,32 @@
 
 generator client {
   provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  output   = "../generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model User {
   id String @id @default(uuid())
   name String
-  github_handle String @unique
+  githubId String? @unique
   email String @unique
-  password_hash String
+  profileUrl String?
+  password_hash String?
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
+}
+
+model RefreshSession {
+  id String @id @default(uuid())
+  userId String 
+  hashedRefreshToken String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt 
 }
 
 model Repo{

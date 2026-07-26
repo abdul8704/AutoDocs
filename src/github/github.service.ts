@@ -51,9 +51,11 @@ export const githubHandlerService = async (event: CodebaseChangeEvent) => {
     if(repo === null){
         // write the repoId to db
         await prisma.repo.create({
-            user_id: "1",
-            github_repo_id: repoId,
-            cloneUrl: event.repo.clone_url,
+            data: {
+                user_id: "1",
+                github_repo_id: repoId,
+                clone_url: event.repo.clone_url,
+            }
         })
 
         // clone the repo
@@ -77,7 +79,13 @@ export const githubHandlerService = async (event: CodebaseChangeEvent) => {
 
             if(oldCommit === newCommit)
                 return;
-            
+
+            if(oldCommit === null){
+                // no previously processed commit to diff against, treat as a fresh clone
+                await cloneNewRepo(event);
+                return;
+            }
+
             // get the patch of the diff (one large string containing all the changes)
             const patch = await gitRepo.diff([
                 oldCommit,

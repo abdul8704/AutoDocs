@@ -23,13 +23,19 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@prisma/client": "^6.19.3",
+    "@prisma/adapter-pg": "^7.9.0",
+    "@prisma/client": "^7.9.0",
+    "axios": "^1.18.1",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "json-web-token": "^4.0.1",
+    "node-appwrite": "^27.1.0",
+    "pg": "^8.22.0",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
-    "prisma": "^6.19.3",
+    "prisma": "^7.9.0",
     "simple-git": "^3.36.0",
     "zod": "^4.4.3"
   }

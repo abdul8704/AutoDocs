@@ -3,7 +3,19 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const envSchema = z.object({
-    PORT: z.coerce.number().default(5000)
+    PORT: z.coerce.number().default(5000),
+    GITHUB_CLIENT_ID: z.string(),
+    GITHUB_SECRET: z.string(),
+    GITHUB_CLIENT_SECRET: z.string(),
+    DATABASE_URL: z.string(),
+    GOOGLE_CLIENT_ID: z.string(),
+    GOOGLE_CLIENT_SECRET: z.string(),
+    GOOGLE_CALLBACK_URL: z.string(),
+    JWT_ACCESS_SECRET: z.string(),
+    JWT_REFRESH_SECRET: z.string(),
+    ACCESS_TOKEN_EXPIRY: z.string(),
+    REFRESH_TOKEN_EXPIRY: z.string(),
+    SERVER_URL: z.url()
 });
 
 export const env = envSchema.parse(process.env);

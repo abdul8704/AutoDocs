@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { githubHandlerService}  from "../services/git.service"
+import { githubHandlerService}  from "./github.service"
 import { CodebaseChangeEvent } from "../types/repo.types"
 
 const githubHandler = async (req: Request, res: Response) => {
