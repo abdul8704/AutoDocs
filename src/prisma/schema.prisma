@@ -13,32 +13,47 @@ datasource db {
 }
 
 model User {
-  id String @id @default(uuid())
-  name String
-  githubId String? @unique
-  email String @unique
-  profileUrl String?
+  id            String   @id @default(uuid())
+  name          String
+  githubId      String?  @unique
+  email         String   @unique
+  profileUrl    String?
   password_hash String?
-  created_at DateTime @default(now())
-  updated_at DateTime @updatedAt
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  refresh_sessions RefreshSession[]
+  repos            Repo[]
+
+  planType      String   @default("FREE")
+  usedDocsQuota Int      @default(0)
 }
 
 model RefreshSession {
-  id String @id @default(uuid())
-  userId String 
+  id                 String    @id @default(uuid())
+  userId             String
   hashedRefreshToken String
-  expiresAt DateTime
-  revokedAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt 
+  expiresAt          DateTime
+  revokedAt          DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
-model Repo{
-  id String @id @default(uuid())
-  user_id String
-  github_repo_id String
-  clone_url String
-  last_processed_commit String? 
-  created_at DateTime @default(now())
-  updated_at DateTime @updatedAt
+model Repo {
+  id                    String   @id @default(uuid())
+  user_id               String
+  github_repo_id        String   @unique
+  full_name             String?
+  
+  installation_id       Int
+  clone_url             String
+  last_processed_commit String?
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
 }

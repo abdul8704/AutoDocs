@@ -39,75 +39,100 @@ export const fetchAndClassify = async (event: CodebaseChangeEvent, repoName: str
     // if LLM saya updation needed, do "git merge", send new files, docs to LLM and update new docs
 }
 
-export const githubHandlerService = async (event: CodebaseChangeEvent) => {
+export const githubWebhookHandlerService = async (payload: any) => {
     // check if repo id is there in db
-    const repoId = event.repo.id;
-    const repo = await prisma.repo.findUnique({
-        where: {
-            id: repoId
-        }
-    })
+    const githubRepoId = payload.repository.id.toString();
+    const branch = payload.ref; // e.g. "refs/heads/main"
+    const defaultBranch = `refs/heads/${payload.repository.default_branch}`;
 
-    if(repo === null){
-        // write the repoId to db
-        await prisma.repo.create({
-            data: {
-                user_id: "1",
-                github_repo_id: repoId,
-                clone_url: event.repo.clone_url,
-            }
-        })
+    // Only process pushes to the main/default branch
+    if (branch === defaultBranch) {
 
-        // clone the repo
-        await cloneNewRepo(event);
-        // TODO: cook with LLM
 
+      // has the user imported this repo??
+      const importedRepo = await prisma.repo.findUnique({
+        where: { github_repo_id: githubRepoId },
+        include: { user: true },
+      });
+
+      if (!importedRepo) {
+        // App is installed on this repo, but user hasn't imported it in our dashboard. Ignore!
+        console.log(payload.repository, "is not associated with this user");
+        return;
+      }
+
+      // --- FUTURE PRICING CHECK (SEAMLESS INTEGRATION) ---
+      // if (importedRepo.user.usedDocsQuota >= 15 && importedRepo.user.planType === 'FREE') {
+      //    return res.status(200).send("Quota exceeded");
+      // }
+
+      console.log(`🚀 Triggering doc update for imported repo: ${importedRepo.user.name}`);
+      console.log(`Commit hash: ${payload.after}`);
+
+      // 4. CALL YOUR DOC GENERATION / SIMPLE-GIT SERVICE HERE
+      // await processRepoUpdate(importedRepo.id, importedRepo.installation_id, payload.after);
     }
-    else{
-        // check if local copy exists
-        const exists = await checkIfRepoExists(event.repo.full_name);
 
-        if(exists){
-            // fetch the latest commits and compare with db commit
-            const path = constructPath(event.repo.id);
-            const gitRepo = simpleGit(path);
+    // if(repo === null){
+    //     // write the repoId to db
+    //     await prisma.repo.create({
+    //         data: {
+    //             user_id: "1",
+    //             github_repo_id: repoId,
+    //             clone_url: event.repo.clone_url,
+    //         }
+    //     })
 
-            await gitRepo.fetch();
-            const oldCommit = repo.last_processed_commit;
-            const newCommit = event.head_commit.id;
-            const commitMessage = event.head_commit.message;
+    //     // clone the repo
+    //     await cloneNewRepo(event);
+    //     // TODO: cook with LLM
 
-            if(oldCommit === newCommit)
-                return;
+    // }
+    // else{
+    //     // check if local copy exists
+    //     const exists = await checkIfRepoExists(event.repo.full_name);
 
-            if(oldCommit === null){
-                // no previously processed commit to diff against, treat as a fresh clone
-                await cloneNewRepo(event);
-                return;
-            }
+    //     if(exists){
+    //         // fetch the latest commits and compare with db commit
+    //         const path = constructPath(event.repo.id);
+    //         const gitRepo = simpleGit(path);
 
-            // get the patch of the diff (one large string containing all the changes)
-            const patch = await gitRepo.diff([
-                oldCommit,
-                newCommit
-            ]);
+    //         await gitRepo.fetch();
+    //         const oldCommit = repo.last_processed_commit;
+    //         const newCommit = event.head_commit.id;
+    //         const commitMessage = event.head_commit.message;
 
-            // diff of only new file names of added or modified or deleted files
-            const filesChanged = await gitRepo.diff([
-                "--name-status",
-                oldCommit,
-                newCommit
-            ]);
+    //         if(oldCommit === newCommit)
+    //             return;
 
-            // TODO: Invoke LLM to compare patch and docs of repo to see if repo needs docs updation
-            // TODO: If docs need updation, cook with LLM
+    //         if(oldCommit === null){
+    //             // no previously processed commit to diff against, treat as a fresh clone
+    //             await cloneNewRepo(event);
+    //             return;
+    //         }
+
+    //         // get the patch of the diff (one large string containing all the changes)
+    //         const patch = await gitRepo.diff([
+    //             oldCommit,
+    //             newCommit
+    //         ]);
+
+    //         // diff of only new file names of added or modified or deleted files
+    //         const filesChanged = await gitRepo.diff([
+    //             "--name-status",
+    //             oldCommit,
+    //             newCommit
+    //         ]);
+
+    //         // TODO: Invoke LLM to compare patch and docs of repo to see if repo needs docs updation
+    //         // TODO: If docs need updation, cook with LLM
     
-        }
-        else{
-            // clone anew
-            await cloneNewRepo(event); 
-        }
-    }
+    //     }
+    //     else{
+    //         // clone anew
+    //         await cloneNewRepo(event); 
+    //     }
+    // }
 }
 
 function main(){

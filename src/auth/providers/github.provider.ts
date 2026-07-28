@@ -2,6 +2,8 @@ import axios from "axios";
 import { env } from "../../config/env";
 import { OAuthProfile } from "./provider.types";
 
+// everythin here is github oauth related
+
 // Builds the URL we redirect the browser to so the user can authorize our GitHub OAuth app.
 // `state` is an opaque, single-use value the caller generates and later validates on
 // `/auth/github/callback` to protect against CSRF.

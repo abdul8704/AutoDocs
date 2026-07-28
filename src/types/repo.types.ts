@@ -43,3 +43,11 @@ export interface GitFetchResponse {
         tracking: string;
     }[];
 }
+
+export interface GitAllRepoResponse {
+    githubRepoId: string;
+    name: string;
+    cloneUrl: string;
+    isPrivate: boolean;
+    defaultBranch: string;
+}

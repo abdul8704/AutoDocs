@@ -5,6 +5,8 @@ import { env } from "./config/env"
 import { logger } from "./utils/logger.utils"
 import { errorMiddleware } from "./middleware/error.middleware"
 import githubRouter from "./github/webhook.routes"
+import githubAppRouter from "./github/github.app.routes"
+
 import authRouter from "./auth/auth.routes"
 import dotenv from "dotenv";
 import { authenticate } from "./auth/auth.middleware"
@@ -24,7 +26,9 @@ app.use(cookieParser());
 // /webhooks is called directly by GitHub, authenticated via signature verification, not user JWTs.
 // /health is a public uptime check.
 app.use("/auth", authRouter);
-app.use("/webhooks", githubRouter);
+app.use("/api/webhooks", githubRouter);
+app.use("/api/github", githubAppRouter);
+
 app.get("/health", ( _req, res) => {
     res.send("yarupa nee")
 });
