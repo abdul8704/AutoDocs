@@ -1,18 +1,20 @@
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
+
 import { env } from "./config/env"
 import { logger } from "./utils/logger.utils"
+
 import { errorMiddleware } from "./middleware/error.middleware"
+import { authenticate } from "./auth/auth.middleware"
+
 import githubRouter from "./github/webhook.routes"
 import githubAppRouter from "./github/github.app.routes"
-
 import authRouter from "./auth/auth.routes"
-import dotenv from "dotenv";
-import { authenticate } from "./auth/auth.middleware"
-dotenv.config();
 
 const app = express();
+
+app.use("/api/webhooks", githubRouter);
 
 app.use(cors({
     origin: env.CLIENT_URL,
@@ -26,7 +28,6 @@ app.use(cookieParser());
 // /webhooks is called directly by GitHub, authenticated via signature verification, not user JWTs.
 // /health is a public uptime check.
 app.use("/auth", authRouter);
-app.use("/api/webhooks", githubRouter);
 app.use("/api/github", githubAppRouter);
 
 app.get("/health", ( _req, res) => {
