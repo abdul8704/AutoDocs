@@ -1,32 +1,33 @@
 import simpleGit from "simple-git"
-import fs from "fs/promises";
+import fs, { rm } from "fs/promises";
 import { createPath } from "../utils/pathHelper.utils";
 import { CodebaseChangeEvent, GitFetchResponse } from "../types/repo.types";
 import { constructPath } from "../utils/pathHelper.utils"
 import prisma from "../prisma/prisma";
-
+import * as githubAppService from "./github.app.service"
 const git = simpleGit();
 
 // clone the repo into our base
 export const cloneNewRepo = async (event: CodebaseChangeEvent) => {
     // creates path like codebases/<repo_id>/
     const path = constructPath(event.repo.id);
-    await git.clone(event.repo.clone_url, path);
+    const cloneUrl = await githubAppService.getAuthenticatedRepoUrl(event.repo.clone_url, event.installation.id);
+    await git.clone(cloneUrl, path);
 }
 
 // check if the repo already exists in our local base
-export const checkIfRepoExists = async (repoName: string): Promise<boolean> => {
-    const path = createPath("codebases", repoName);
+export const checkIfRepoExists = async (repoId: string): Promise<boolean> => {
+    const path = createPath("codebases", repoId);
 
     const stats = await fs.stat(path);
-    return stats.isDirectory(); 
+    return stats.isDirectory();
 }
 
 export const fetchAndClassify = async (event: CodebaseChangeEvent, repoName: string) => {
-    const repoUrl: string = event.repo.clone_url;
+    const repoUrl: string = await githubAppService.getAuthenticatedRepoUrl(event.repo.clone_url, event.installation.id);
     const fetchResult: GitFetchResponse = await git.fetch(repoUrl, "main");
 
-    
+
     // do git fetch
     // get our commit id from db
     // compare it with afterSHA in the event object with git DIFF
@@ -49,28 +50,28 @@ export const githubWebhookHandlerService = async (payload: any) => {
     if (branch === defaultBranch) {
 
 
-      // has the user imported this repo??
-      const importedRepo = await prisma.repo.findUnique({
-        where: { github_repo_id: githubRepoId },
-        include: { user: true },
-      });
+        // has the user imported this repo??
+        const importedRepo = await prisma.repo.findUnique({
+            where: { github_repo_id: githubRepoId },
+            include: { user: true },
+        });
 
-      if (!importedRepo) {
-        // App is installed on this repo, but user hasn't imported it in our dashboard. Ignore!
-        console.log(payload.repository, "is not associated with this user");
-        return;
-      }
+        if (!importedRepo) {
+            // App is installed on this repo, but user hasn't imported it in our dashboard. Ignore!
+            console.log(payload.repository, "is not associated with this user");
+            return;
+        }
 
-      // --- FUTURE PRICING CHECK (SEAMLESS INTEGRATION) ---
-      // if (importedRepo.user.usedDocsQuota >= 15 && importedRepo.user.planType === 'FREE') {
-      //    return res.status(200).send("Quota exceeded");
-      // }
+        // --- FUTURE PRICING CHECK (SEAMLESS INTEGRATION) ---
+        // if (importedRepo.user.usedDocsQuota >= 15 && importedRepo.user.planType === 'FREE') {
+        //    return res.status(200).send("Quota exceeded");
+        // }
 
-      console.log(`🚀 Triggering doc update for imported repo: ${importedRepo.user.name}`);
-      console.log(`Commit hash: ${payload.after}`);
+        console.log(`🚀 Triggering doc update for imported repo: ${importedRepo.user.name}`);
+        console.log(`Commit hash: ${payload.after}`);
 
-      // 4. CALL YOUR DOC GENERATION / SIMPLE-GIT SERVICE HERE
-      // await processRepoUpdate(importedRepo.id, importedRepo.installation_id, payload.after);
+        // 4. CALL YOUR DOC GENERATION / SIMPLE-GIT SERVICE HERE
+        // await processRepoUpdate(importedRepo.id, importedRepo.installation_id, payload.after);
     }
 
     // if(repo === null){
@@ -126,7 +127,7 @@ export const githubWebhookHandlerService = async (payload: any) => {
 
     //         // TODO: Invoke LLM to compare patch and docs of repo to see if repo needs docs updation
     //         // TODO: If docs need updation, cook with LLM
-    
+
     //     }
     //     else{
     //         // clone anew
@@ -135,7 +136,27 @@ export const githubWebhookHandlerService = async (payload: any) => {
     // }
 }
 
-function main(){
+export const deleteRepo = async (userId: string, repoId: string) => {
+    const path = constructPath(repoId);
+
+    if (await checkIfRepoExists(path)) {
+        await rm(path, {
+            recursive: true,
+            force: true,
+        });
+    }
+
+    await prisma.repo.deleteMany({
+        where: {
+            user_id: userId,
+            github_repo_id: repoId
+        }
+    })
+    
+    return;
+}
+
+function main() {
     const a = async () => {
         const k = await git.fetch("https://github.com/abdul8704/dsa-mentor-worker.git", "main");
 

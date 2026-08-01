@@ -22,6 +22,11 @@ model User {
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
 
+  // Set once the user installs our GitHub App (via the setup callback). Lets us
+  // know whether to show "Connect GitHub" vs. the accessible-repos list, and which
+  // installation to use when talking to the GitHub API on this user's behalf.
+  githubInstallationId Int?
+
   refresh_sessions RefreshSession[]
   repos            Repo[]
 

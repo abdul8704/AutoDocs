@@ -113,3 +113,12 @@ export const revokeRefreshToken = async (rawRefreshToken: string): Promise<void>
         },
     });
 };
+
+export const deleteUser = async (userId: string) => {
+    await prisma.user.delete({
+        where: {
+            id: userId
+        }
+    })
+    return;
+}

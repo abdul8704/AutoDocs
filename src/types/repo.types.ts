@@ -20,7 +20,12 @@ export interface CodebaseChangeEvent {
         modified: string[];
         removed: string[];
     }
+    installation: {
+        id: number;
+        node_id: string;
+    }
 }
+
 
 export interface GitFetchResponse {
     raw: string;
@@ -50,4 +55,20 @@ export interface GitAllRepoResponse {
     cloneUrl: string;
     isPrivate: boolean;
     defaultBranch: string;
+}
+
+export interface InstallationStatusResponse {
+    isInstalled: boolean;
+    installationId: number | null;
+}
+
+export interface ImportedRepoResponse {
+    id: string;
+    githubRepoId: string;
+    name: string | null;
+    cloneUrl: string;
+    installationId: number;
+    lastProcessedCommit: string | null;
+    createdAt: Date;
+    updatedAt: Date;
 }

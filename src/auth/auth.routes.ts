@@ -6,8 +6,10 @@ import {
     googleLogin,
     googleCallback,
     refresh,
+    deleteUser,
     logout,
 } from "./auth.controller";
+import { authenticate } from "./auth.middleware";
 
 const authRouter = router.Router();
 
@@ -19,5 +21,7 @@ authRouter.get("/google/callback", asyncHandler(googleCallback));
 
 authRouter.post("/refresh", asyncHandler(refresh));
 authRouter.post("/logout", asyncHandler(logout));
+
+authRouter.delete("/user", authenticate, asyncHandler(deleteUser));
 
 export default authRouter;

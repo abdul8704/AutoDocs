@@ -119,3 +119,10 @@ export const logout = async (req: Request, res: Response) => {
     res.clearCookie(REFRESH_COOKIE_NAME, clearCookieOptions());
     return res.json({ success: true });
 }
+
+export const deleteUser = async (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+
+    await authService.deleteUser(userId);
+    res.status(204).json({ success: true });
+}
