@@ -83,10 +83,10 @@ export const getAllAccessibleRepos = async (req: Request, res: Response) => {
 }
 
 export const importRepo = async (req: Request, res: Response) => {
-    const { githubRepoId, name, cloneUrl } = req.body;
+    const { githubRepoId, name, cloneUrl, installation_id } = req.body;
     const userId = (req as any).user.id;
 
-    const importedRepo = await githubAppService.importThisRepo(userId, githubRepoId, name, cloneUrl)
+    const importedRepo = await githubAppService.importThisRepo(userId, githubRepoId, name, cloneUrl, installation_id)
     res.status(201).json({ success: true, importedRepo });
 }
 

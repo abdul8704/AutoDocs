@@ -4,6 +4,8 @@ import { createAppAuth } from "@octokit/auth-app";
 import prisma from "../prisma/prisma";
 import { GitAllRepoResponse, ImportedRepoResponse, InstallationStatusResponse } from "../types/repo.types" 
 import { HttpError } from "../utils/httpError.utils";
+import { publishFirstTimeImport } from "../queue/publishers"
+import { FirstTimeImportJobData } from "../queue/types.queue";
 
 const APP_ID = env.GITHUB_APP_ID
 const PRIVATE_KEY = env.GITHUB_APP_PRIVATE_KEY.replace(/\\n/g, "\n");
@@ -88,7 +90,7 @@ export const getAllReposForUser = async (userId: string) => {
     return getAllRepos(user.githubInstallationId);
 }
 
-export const importThisRepo = async (userId: string, githubRepoId: string, name: string, cloneUrl: string) => {
+export const importThisRepo = async (userId: string, githubRepoId: string, name: string, cloneUrl: string, installation_id: number) => {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { githubInstallationId: true },
@@ -114,6 +116,16 @@ export const importThisRepo = async (userId: string, githubRepoId: string, name:
         installation_id: user.githubInstallationId,
       },
     });
+
+    const publisherData: FirstTimeImportJobData = {
+      repoId: githubRepoId,
+      userId,
+      installationId: user.githubInstallationId,
+      defaultBranch: "main",
+      githubUrl: await getAuthenticatedRepoUrl(cloneUrl, user.githubInstallationId),
+//      customPrompt // TODO
+    }
+    await publishFirstTimeImport(publisherData)
 
     return importedRepo;
 }
