@@ -1,4 +1,3 @@
-import simpleGit from "simple-git"
 import fs from "fs/promises";
 import { createPath } from "../utils/pathHelper.utils";
 import { constructPath } from "../utils/pathHelper.utils"
@@ -9,7 +8,6 @@ import * as githubAppService from "./github.app.service"
 import { publishCleanup, publishDeepCloneForPush } from "../queue/publishers"
 import { CleanupJobData, DeepClonePushJobData } from "../queue/types.queue";
 
-const git = simpleGit();
 
 // clone the repo into our base
 export const cloneNewRepo = async (event: CodebaseChangeEvent, userId: string) => {
@@ -25,7 +23,8 @@ export const cloneNewRepo = async (event: CodebaseChangeEvent, userId: string) =
         installationId: event.installation.id,
         beforeSha: event.before,
         afterSha: event.after,
-        userId
+        userId,
+        cloneUrl: await githubAppService.getAuthenticatedRepoUrl(event.repo.clone_url, event.installation.id)
     };
 
     await publishDeepCloneForPush(repoData);
@@ -39,21 +38,6 @@ export const checkIfRepoExists = async (repoId: string): Promise<boolean> => {
     return stats.isDirectory();
 }
 
-export const fetchAndClassify = async (event: CodebaseChangeEvent, repoName: string) => {
-    const repoUrl: string = await githubAppService.getAuthenticatedRepoUrl(event.repo.clone_url, event.installation.id);
-    const fetchResult: GitFetchResponse = await git.fetch(repoUrl, "main");
-
-
-    // do git fetch
-    // get our commit id from db
-    // compare it with afterSHA in the event object with git DIFF
-    // send diff file, docs, repo tree to LLM for classification
-
-    // return LLM decision
-
-    // if LLM says no updation, update db to this commit
-    // if LLM saya updation needed, do "git merge", send new files, docs to LLM and update new docs
-}
 
 export const githubWebhookHandlerService = async (payload: any) => {
     // check if repo id is there in db

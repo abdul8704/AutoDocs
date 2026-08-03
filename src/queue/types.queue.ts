@@ -5,13 +5,15 @@ export interface FirstTimeImportJobData {
   installationId: number;
   userId: string;
   customPrompt?: string;
-  githubUrl: string;
+  repoFullName: string;
+  cloneUrl: string;
 }
 
 /** Payload for deep cloning/fetching a repo when local cache is missing on push */
 export interface DeepClonePushJobData {
   repoId: string;
   repoFullName: string;
+  cloneUrl: string;
   defaultBranch: string;
   installationId: number;
   beforeSha: string;
