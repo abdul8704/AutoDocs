@@ -61,4 +61,46 @@ model Repo {
   updated_at            DateTime @updatedAt
 
   user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  module_docs ModuleDoc[]
+  doc_state   RepoDocState?
+}
+
+// ============================================================================
+// Documentation pipeline
+// ============================================================================
+
+// One row per generated module doc. (repo_id, module_id) is the identity;
+// input_hash is the cache key: if a freshly computed Module.inputHash matches,
+// the stored markdown is current and no LLM call is needed.
+model ModuleDoc {
+  id           String   @id @default(uuid())
+  repo_id      String
+  module_id    String // full dir path, e.g. "src/orders" or "(root)" / "(repo)"
+  display_name String
+  input_hash   String
+  markdown     String
+  incomplete   Json     @default("[]") // IncompleteFeature[] excluded from the markdown
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  repo Repo @relation(fields: [repo_id], references: [id], onDelete: Cascade)
+
+  @@unique([repo_id, module_id])
+  @@index([repo_id])
+}
+
+// One row per repo: the architecture doc + run-level state the webhook
+// pipeline diffs against (intent hash, prompt version).
+model RepoDocState {
+  repo_id         String   @id
+  arch_doc        String?
+  owner_report    String?
+  intent_hash     String?
+  prompt_version  String?
+  resolution_rate Float?
+  route_kind      String? // "TINY" | "NORMAL" — hysteresis for threshold flapping later
+  updated_at      DateTime @updatedAt
+
+  repo Repo @relation(fields: [repo_id], references: [id], onDelete: Cascade)
 }

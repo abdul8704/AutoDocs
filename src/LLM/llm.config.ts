@@ -1,4 +1,5 @@
 import { LlmRole } from "./llm.types";
+import { llmEnv } from "./llm.env";
 
 export interface RoleConfig {
     provider: "anthropic";
@@ -22,6 +23,7 @@ export const LLM_CONFIG: {
         archDoc:    { provider: "anthropic", model: "claude-opus-5",   maxTokens: 16_000 },
     },
 
-    concurrency: 4,          // parallel calls for fan-out roles (moduleDoc)
-    maxRetries: 1,           // OUR retries, on top of the SDK's built-in 429/5xx retries
+    // Env can override the operational knobs; models stay in this file only.
+    concurrency: llmEnv.LLM_CONCURRENCY ?? 4,
+    maxRetries: llmEnv.LLM_MAX_RETRIES ?? 1,
 };

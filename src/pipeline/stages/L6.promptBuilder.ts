@@ -51,7 +51,7 @@ export function buildTinyPrompt(
     ].join("\n\n");
 
     return {
-        system: [{ type: "text", text: TINY_SYSTEM }],
+        system: [{ text: TINY_SYSTEM }],
         user,
     };
 }
@@ -115,9 +115,11 @@ export function buildModulePrompt(
     return {
         system: [
             {
-                type: "text",
+                // cache: true -> the Anthropic adapter turns this into
+                // cache_control. Byte-identical across all module calls of a
+                // run, so call #1 writes the prefix cache and the rest read it.
                 text: MODULE_SYSTEM + "\n\n# Project context\n" + intent.bundle,
-                cache_control: { type: "ephemeral" },
+                cache: true,
             },
         ],
         user,
@@ -150,7 +152,7 @@ export function buildArchPrompt(
     ].join("\n\n");
 
     return {
-        system: [{ type: "text", text: ARCH_SYSTEM }],
+        system: [{ text: ARCH_SYSTEM }],
         user,
     };
 }
@@ -181,7 +183,7 @@ export function buildValidationPrompt(
     ].join("\n\n");
 
     return {
-        system: [{ type: "text", text: VALIDATION_SYSTEM }],
+        system: [{ text: VALIDATION_SYSTEM }],
         user,
     };
 }

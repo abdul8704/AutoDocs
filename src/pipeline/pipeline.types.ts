@@ -7,8 +7,8 @@ export interface FileRecord {
 }
 
 export interface Module {
-  displayName: any;
   id: string;            // the folder key: "src/orders"  (or "(root)")
+  displayName: string;   // ceremony-stripped label for docs: "orders"
   files: FileRecord[];   // disjoint across modules — every file in exactly one
   inputHash: string;     // sha256( sorted member contentHashes + PROMPT_VERSION )
 }
@@ -65,8 +65,11 @@ export interface RouterOptions {
   tinyThresholdTokens?: number;   // default 100_000
 }
 
+// Provider-NEUTRAL prompt shape — structurally identical to LlmPrompt in the
+// LLM module. `cache: true` marks a stable prefix; the Anthropic adapter
+// translates it to cache_control. Never put provider syntax in this type.
 export interface BuiltPrompt {
-  system: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }>;
+  system: Array<{ text: string; cache?: boolean }>;
   user: string;
 }
 

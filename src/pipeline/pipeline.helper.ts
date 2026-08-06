@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { Module, FileRecord, GroupingOptions, DirNode } from "./pipeline.types";
+import { FileRecord } from "./pipeline.types";
 
 
 export function sha256(data: string): string {
@@ -20,27 +20,64 @@ export function dirOf(filePath: string): string {
     const i = filePath.lastIndexOf("/");
     return i === -1 ? "" : filePath.slice(0, i);
 }
-export interface IntentBundle {
-    bundle: string;        // the concatenated text that goes into prompts
-    intentHash: string;    // sha256 of bundle — detects README/config changes on webhooks
-    includedFiles: string[];
-    truncated: boolean;    // true if the total cap forced us to drop content
+
+/**
+ * Runs fn over items with at most `limit` in flight. Replaces p-limit
+ * (ESM-only in current versions; this project is CommonJS). The shared `i`
+ * is race-free because JS is single-threaded between awaits.
+ */
+export async function mapWithConcurrency<T>(
+    items: T[],
+    limit: number,
+    fn: (item: T) => Promise<void>,
+): Promise<void> {
+
+    let i = 0;
+
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+
+        while (i < items.length) {
+            const idx = i++;
+            await fn(items[idx]);
+        }
+    });
+
+    await Promise.all(workers);
 }
 
-export interface IntentOptions {
-    maxCharsPerFile?: number;   // default 12_000
-    maxTotalChars?: number;     // default 32_000
+/** Compact 3-level directory tree for the arch prompt. Deterministic output. */
+export function buildFileTree(files: FileRecord[], maxDepth = 3): string {
+
+    const dirs = new Map<string, number>();   // dir path -> file count at/below
+
+    for (const f of files) {
+
+        const parts = normalizePath(f.path).split("/").slice(0, -1);
+
+        for (let d = 1; d <= Math.min(parts.length, maxDepth); d++) {
+            const key = parts.slice(0, d).join("/");
+            dirs.set(key, (dirs.get(key) ?? 0) + 1);
+        }
+    }
+
+    const lines: string[] = [];
+
+    for (const key of [...dirs.keys()].sort()) {
+        const depth = key.split("/").length - 1;
+        lines.push(`${"  ".repeat(depth)}${key.split("/").pop()}/  (${dirs.get(key)} files)`);
+    }
+
+    return lines.join("\n") || "(flat repo — no directories)";
 }
 
-export type Route =
-    | { kind: "TINY" }
-    | {
-        kind: "NORMAL";
-        staleModules: Module[];      // regenerate these (LLM calls)
-        cachedModuleIds: string[];   // reuse stored docs, $0
-        deletedModuleIds: string[];  // stored docs whose module no longer exists
-      };
+const ENTRY_POINT_RE = /(^|\/)(main|index|app|application|server|cli)\.\w+$/i;
 
-export interface RouterOptions {
-    tinyThresholdTokens?: number;   // default 100_000
+/** Heuristic entry points for the arch prompt's request-flow section. */
+export function guessEntryPoints(codeFiles: FileRecord[]): string[] {
+
+    return codeFiles
+        .map(f => normalizePath(f.path))
+        .filter(p => ENTRY_POINT_RE.test(p))
+        .sort((a, b) => a.split("/").length - b.split("/").length)   // shallowest first
+        .slice(0, 5);
 }

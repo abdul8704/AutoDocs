@@ -27,13 +27,23 @@ export const storageWorker = new Worker<StorageJobData>(
                 await sleep(60 * 1000); // Pauses the loop execution properly for 1 minute
             }
 
+            // --depth=1 + --single-branch clones the DEFAULT branch shallowly.
+            // (was "-branch=main": invalid flag — single dash — and pinning
+            // "main" breaks repos whose default branch is "master".)
             await git.clone(data.cloneUrl, repoPath, [
                 "--depth=1",
                 "--single-branch",
-                "-branch=main"
             ]);
 
-            await generateFirstTimeDocs(data.repoId, repoPath)
+            const result = await generateFirstTimeDocs(data.repoId, repoPath);
+
+            console.log(
+                `[StorageWorker] docs generated for ${data.repoId}: ` +
+                `route=${result.route}, moduleDocs=${result.moduleDocCount}, ` +
+                `archDoc=1, ownerReport=${result.ownerReport ? "yes" : "none"}`,
+            );
+
+            return result;
         }
         else if (job.name === "clone-deep-push") {
             const data = job.data as DeepClonePushJobData;

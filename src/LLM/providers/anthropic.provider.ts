@@ -1,7 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { LlmPrompt, LlmProvider, LlmUsage } from "../llm.types";
+import { llmEnv } from "../llm.env";
 
-const client = new Anthropic();      // ANTHROPIC_API_KEY from env — key handling lives here too
+// Key handling lives HERE and nowhere else — validated by llm.env at startup,
+// so a missing key fails loudly on boot instead of on the first LLM call.
+const client = new Anthropic({ apiKey: llmEnv.ANTHROPIC_API_KEY });
 
 export const anthropicProvider: LlmProvider = {
 

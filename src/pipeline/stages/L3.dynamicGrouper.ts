@@ -68,10 +68,15 @@ export function resolveSpec(spec: string, importerPath: string,
 export function buildModuleEdges(codeFiles: FileRecord[],
     readFile: (path: string) => string,
     fileToModule: Map<string, string>,
-): { edges: ModuleEdge[]; resolutionRate: number } {
+): { edges: ModuleEdge[]; resolutionRate: number; fileImportCounts: Map<string, number> } {
     const manifest = new Set(codeFiles.map(f => normalizePath(f.path)));
     const byBase = buildBasenameIndex(manifest);
     const counts = new Map<string, number>();
+
+    // file-level in-degree: how many files import each file. Used by the
+    // module prompt to order files (most-imported first) and pick truncation
+    // victims (least-imported first) when a module exceeds its token budget.
+    const fileImportCounts = new Map<string, number>();
     let total = 0, resolved = 0;
 
     for (const file of codeFiles) {
@@ -82,6 +87,7 @@ export function buildModuleEdges(codeFiles: FileRecord[],
             const target = resolveSpec(spec, normalizePath(file.path), manifest, byBase);
             if (!target) continue;
             resolved++;
+            fileImportCounts.set(target, (fileImportCounts.get(target) ?? 0) + 1);
             const to = fileToModule.get(target);
             if (!to || to === from) continue;                         // same-module -> not an edge
             const key = `${from}\u0000${to}`;
@@ -94,11 +100,5 @@ export function buildModuleEdges(codeFiles: FileRecord[],
             return { from, to, count };
         })
         .sort((a, b) => b.count - a.count);
-    return { edges, resolutionRate: total === 0 ? 0 : resolved / total };
-}
-
-export function buildFileToModuleIndex(modules: Module[]): Map<string, string> {
-    const index = new Map<string, string>();
-    for (const m of modules) for (const f of m.files) index.set(normalizePath(f.path), m.id);
-    return index;
+    return { edges, resolutionRate: total === 0 ? 0 : resolved / total, fileImportCounts };
 }
