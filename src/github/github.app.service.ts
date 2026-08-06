@@ -1,6 +1,4 @@
 import { env } from "../config/env";
-import { Octokit } from "@octokit/rest";
-import { createAppAuth } from "@octokit/auth-app";
 import prisma from "../prisma/prisma";
 import { GitAllRepoResponse, ImportedRepoResponse, InstallationStatusResponse } from "../types/repo.types"
 import { HttpError } from "../utils/httpError.utils";
@@ -18,7 +16,12 @@ const PRIVATE_KEY = env.GITHUB_APP_PRIVATE_KEY.replace(/\\n/g, "\n");
     2. github will verify this token with its public key to verify the identity of our server
     3. and then after confirming its our server that is making the req, it will send installation token
 */
-export const getInstallationOctokit = async (installationId: number): Promise<Octokit> => {
+export const getInstallationOctokit = async (installationId: number) => {
+  const [{ Octokit }, { createAppAuth }] = await Promise.all([
+    import("@octokit/rest"),
+    import("@octokit/auth-app"),
+  ]);
+
   return new Octokit({
     authStrategy: createAppAuth,
     auth: {
