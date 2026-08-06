@@ -73,6 +73,14 @@ export interface BuiltPrompt {
   user: string;
 }
 
+// Free-text instructions the repo owner attached to this repo (Repo.arch_prompt /
+// Repo.module_prompt). Already sanitized by the prompt-injection guard at write
+// time; the builders still wrap it as untrusted input.
+export interface CustomInstructions {
+  arch: string | null;
+  module: string | null;
+}
+
 export interface IncompleteFeature {
   feature: string;
   status: "stub" | "partial" | "scaffolding";
@@ -84,6 +92,22 @@ export interface IncompleteFeature {
 export interface ModuleDocResult {
   markdown: string;
   incomplete: IncompleteFeature[];
+}
+
+/** Commit/PR metadata — separate fields by design, so it can never leak into
+ *  the doc markdown that gets written to the user's repo. */
+export interface PrMetadata {
+  commitMessage: string;
+  prTitle: string;
+  prBody: string;
+}
+
+/** TINY call output (TINY_DOC_SCHEMA): combined doc + exclusions + PR meta. */
+export interface TinyDocResult extends ModuleDocResult, PrMetadata {}
+
+/** Arch call output (ARCH_DOC_SCHEMA): arch doc + PR meta for the whole set. */
+export interface ArchDocResult extends PrMetadata {
+  markdown: string;
 }
 
 export const DOC_SECTIONS = [

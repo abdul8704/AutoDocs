@@ -52,7 +52,7 @@ model Repo {
   id                    String   @id @default(uuid())
   user_id               String
   github_repo_id        String   @unique
-  full_name             String?
+  full_name             String
   
   installation_id       Int
   clone_url             String
@@ -60,10 +60,17 @@ model Repo {
   created_at            DateTime @default(now())
   updated_at            DateTime @updatedAt
 
+  // Free-text instructions the repo owner adds on top of our prompts. Stored
+  // already sanitized — every write goes through the prompt-injection guard.
+  arch_prompt        String?
+  module_prompt      String?
+  prompts_updated_at DateTime?
+
   user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
-  module_docs ModuleDoc[]
-  doc_state   RepoDocState?
+  module_docs   ModuleDoc[]
+  doc_state     RepoDocState?
+  notifications Notification[]
 }
 
 // ============================================================================
@@ -92,6 +99,24 @@ model ModuleDoc {
 
 // One row per repo: the architecture doc + run-level state the webhook
 // pipeline diffs against (intent hash, prompt version).
+// One row per doc-generation run outcome — written ALWAYS, whether the run
+// succeeded, raised the PR with warnings, or failed partway. repo_id is the
+// github_repo_id, which is what the queue payload and pipeline actually carry.
+model Notification {
+  id         String   @id @default(uuid())
+  repo_id    String
+  kind       String   @default("DOC_RUN")
+  status     String // "SUCCESS" | "PARTIAL" | "FAILED"
+  message    String
+  pr_url     String?
+  logs       Json     @default("{}")
+  created_at DateTime @default(now())
+
+  repo Repo @relation(fields: [repo_id], references: [github_repo_id], onDelete: Cascade)
+
+  @@index([repo_id, created_at])
+}
+
 model RepoDocState {
   repo_id         String   @id
   arch_doc        String?

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { deleteRepo, handleSetupCallback, getAllAccessibleRepos, importRepo, getImportedRepos, getInstallationStatus } from "./github.controller"
+import { deleteRepo, handleSetupCallback, getAllAccessibleRepos, importRepo, getImportedRepos, getInstallationStatus, getRepoPrompts, updateRepoPrompts } from "./github.controller"
 import { asyncHandler } from "../utils/asyncHandler.utils"
 import { authenticate } from "../auth/auth.middleware";
 
@@ -16,5 +16,9 @@ githubAppRouter.get("/imported-repos", authenticate, asyncHandler(getImportedRep
 githubAppRouter.post("/import-repo", authenticate, asyncHandler(importRepo));
 
 githubAppRouter.delete("/repo/:repoId", authenticate, asyncHandler(deleteRepo))
+
+// Custom doc instructions, editable at any time — POST overwrites.
+githubAppRouter.get("/repo/:repoId/prompts", authenticate, asyncHandler(getRepoPrompts))
+githubAppRouter.post("/repo/:repoId/prompts", authenticate, asyncHandler(updateRepoPrompts))
 
 export default githubAppRouter;

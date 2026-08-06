@@ -81,3 +81,56 @@ export function guessEntryPoints(codeFiles: FileRecord[]): string[] {
         .sort((a, b) => a.split("/").length - b.split("/").length)   // shallowest first
         .slice(0, 5);
 }
+/**
+ * Turns a module display name into a safe markdown filename:
+ *   "auth"            -> "auth.md"
+ *   "src/orders"      -> "src-orders.md"
+ *   "(root)"          -> "root.md"
+ * Filesystem-safe, lowercase, deterministic.
+ */
+export function toDocFileName(displayName: string): string {
+
+    const slug = displayName
+        .replace(/[()]/g, "")          // "(root)" -> "root"
+        .replace(/[/\\]+/g, "-")       // path separators -> hyphen
+        .replace(/\s+/g, "-")          // spaces -> hyphen
+        .replace(/[^a-zA-Z0-9._-]/g, "")
+        .replace(/^[-.]+|[-.]+$/g, "")
+        .toLowerCase();
+
+    return `${slug || "module"}.md`;
+}
+
+/**
+ * Maps every module id to a UNIQUE .md filename. Display names can collide
+ * after slugging ("(root)" and a dir named root); collisions fall back to the
+ * slug of the full module id, then to a numeric suffix — always deterministic.
+ */
+export function buildDocFileNames(
+    modules: Array<{ id: string; displayName: string }>,
+): Map<string, string> {
+
+    const byId = new Map<string, string>();
+    const taken = new Set<string>(["architecture.md"]);   // reserved for the arch doc
+
+    for (const m of [...modules].sort((a, b) => a.id.localeCompare(b.id))) {
+
+        let name = toDocFileName(m.displayName);
+
+        if (taken.has(name)) {
+            name = toDocFileName(m.id);
+        }
+
+        let n = 2;
+
+        while (taken.has(name)) {
+            name = toDocFileName(m.id).replace(/\.md$/, `-${n}.md`);
+            n++;
+        }
+
+        taken.add(name);
+        byId.set(m.id, name);
+    }
+
+    return byId;
+}

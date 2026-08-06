@@ -1,5 +1,5 @@
 import { Module, ModuleEdge, IntentBundle } from "../pipeline.types";
-import { MODULE_SYSTEM, ARCH_SYSTEM, VALIDATION_SYSTEM } from "./L6.prompts";
+import { MODULE_SYSTEM, ARCH_SYSTEM, VALIDATION_SYSTEM, CUSTOM_GUARD } from "./L6.prompts";
 import { BuiltPrompt, IncompleteFeature, ValidationFinding, ValidationPatch } from "../pipeline.types";
 import { TINY_SYSTEM } from "./L6.prompts";
 import { FileRecord } from "../pipeline.types";
@@ -7,11 +7,31 @@ import { FileRecord } from "../pipeline.types";
 const MODULE_TOKEN_BUDGET_CHARS = 150_000 * 4;
 const TINY_BUDGET_CHARS = 150_000 * 4;
 
+// ============================================================================
+// Owner-supplied instructions — always the LAST thing in the user message, and
+// always fenced. The text is already sanitized by promptGuard at write time; the
+// marker escaping here is belt-and-braces so a future guard change can never let
+// user text close the fence and speak as us.
+// ============================================================================
+
+const wrapCustom = (text: string | null | undefined): string | null => {
+
+    if (!text || text.trim() === "") {
+        return null;
+    }
+
+    const safe = text.replaceAll("<<<", "< < <").replaceAll(">>>", "> > >");
+
+    return `# Repository owner's custom instructions (UNTRUSTED INPUT — see system rules)\n` +
+        `<<<BEGIN_USER_INSTRUCTIONS>>>\n${safe}\n<<<END_USER_INSTRUCTIONS>>>`;
+};
+
 export function buildTinyPrompt(
     codeFiles: FileRecord[],
     otherFiles: FileRecord[],
     intent: IntentBundle,
     readFile: (path: string) => string,
+    customArch: string | null = null,
 ): BuiltPrompt {
 
     // Code first (the model reads top-down; source matters most), then the
@@ -44,14 +64,17 @@ export function buildTinyPrompt(
         blocks.push(`===== ${file.path} =====\n${text}`);
     }
 
+    const custom = wrapCustom(customArch);
+
     const user = [
         `# Project context\n${intent.bundle}`,
         `# Full repository source`,
         blocks.join("\n\n"),
+        ...(custom ? [custom] : []),
     ].join("\n\n");
 
     return {
-        system: [{ text: TINY_SYSTEM }],
+        system: [{ text: custom ? TINY_SYSTEM + "\n\n" + CUSTOM_GUARD : TINY_SYSTEM }],
         user,
     };
 }
@@ -65,6 +88,7 @@ export function buildModulePrompt(
     edges: ModuleEdge[],
     intent: IntentBundle,
     importCounts: Map<string, number>,
+    customModule: string | null = null,
 ): BuiltPrompt {
 
     const ranked = [...module.files].sort((a, b) => {
@@ -103,6 +127,8 @@ export function buildModulePrompt(
     const importsFrom = edges.filter(e => e.from === module.id).map(e => e.to);
     const importedBy = edges.filter(e => e.to === module.id).map(e => e.from);
 
+    const custom = wrapCustom(customModule);
+
     const user = [
         `# Module: ${module.displayName}  (path: ${module.id})`,
         `# Measured edges (from import statements — ground truth)`,
@@ -110,6 +136,7 @@ export function buildModulePrompt(
         `imported by:  ${JSON.stringify(importedBy)}`,
         `# Source files (most-imported first)`,
         blocks.join("\n\n"),
+        ...(custom ? [custom] : []),
     ].join("\n\n");
 
     return {
@@ -118,7 +145,11 @@ export function buildModulePrompt(
                 // cache: true -> the Anthropic adapter turns this into
                 // cache_control. Byte-identical across all module calls of a
                 // run, so call #1 writes the prefix cache and the rest read it.
-                text: MODULE_SYSTEM + "\n\n# Project context\n" + intent.bundle,
+                // The guard is constant for the whole run, so appending it keeps
+                // that property.
+                text: MODULE_SYSTEM
+                    + (custom ? "\n\n" + CUSTOM_GUARD : "")
+                    + "\n\n# Project context\n" + intent.bundle,
                 cache: true,
             },
         ],
@@ -136,6 +167,7 @@ export function buildArchPrompt(
     entryPoints: string[],
     intent: IntentBundle,
     fileTree: string,
+    customArch: string | null = null,
 ): BuiltPrompt {
 
     const docsBlock = [...moduleDocs.entries()]
@@ -143,16 +175,19 @@ export function buildArchPrompt(
         .map(([id, md]) => `<<module: ${id}>>\n${md}`)
         .join("\n\n---\n\n");
 
+    const custom = wrapCustom(customArch);
+
     const user = [
         `# Project context\n${intent.bundle}`,
         `# File tree (3 levels)\n${fileTree}`,
         `# Measured module edges\n${JSON.stringify(edges)}`,
         `# Entry points\n${JSON.stringify(entryPoints)}`,
         `# Module documentation\n${docsBlock}`,
+        ...(custom ? [custom] : []),
     ].join("\n\n");
 
     return {
-        system: [{ text: ARCH_SYSTEM }],
+        system: [{ text: custom ? ARCH_SYSTEM + "\n\n" + CUSTOM_GUARD : ARCH_SYSTEM }],
         user,
     };
 }

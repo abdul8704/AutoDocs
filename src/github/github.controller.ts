@@ -5,7 +5,9 @@ import { verifyGitHubSignature } from "../utils/github.security.utils"
 import * as githubAppService from "./github.app.service"
 import { verifyAccessToken } from "../auth/jwt.service";
 import crypto from "crypto";
+import { z } from "zod";
 import { env } from "../config/env"
+import { HttpError } from "../utils/httpError.utils"
 
 const WEBHOOK_SECRET = env.GITHUB_WEBHOOK_SECRET;
 
@@ -102,4 +104,38 @@ export const deleteRepo = async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
 
     await githubService.deleteRepo(userId, repoId);
+}
+
+// Custom doc instructions. Both routes take the github_repo_id as :repoId, the
+// same identifier DELETE /repo/:repoId already uses.
+const repoPromptsSchema = z.object({
+    archPrompt: z.string().nullable().optional(),
+    modulePrompt: z.string().nullable().optional(),
+}).refine(
+    (body) => body.archPrompt !== undefined || body.modulePrompt !== undefined,
+    { message: "Provide archPrompt and/or modulePrompt" },
+);
+
+export const getRepoPrompts = async (req: Request, res: Response) => {
+    const repoId = req.params.repoId as string;
+    const userId = (req as any).user.id;
+
+    const prompts = await githubAppService.getRepoPrompts(userId, repoId);
+    res.status(200).json({ success: true, prompts });
+}
+
+export const updateRepoPrompts = async (req: Request, res: Response) => {
+    const repoId = req.params.repoId as string;
+    const userId = (req as any).user.id;
+
+    const parsed = repoPromptsSchema.safeParse(req.body);
+
+    if (!parsed.success) {
+        throw new HttpError(400, parsed.error.issues.map((i) => i.message).join("; "));
+    }
+
+    // setRepoPrompts scans each field for prompt injection before it writes, and
+    // throws HttpError(400) with the matched rules if anything is rejected.
+    const { prompts, flags } = await githubAppService.setRepoPrompts(userId, repoId, parsed.data);
+    res.status(200).json({ success: true, prompts, flags });
 }
