@@ -120,7 +120,7 @@ export const importThisRepo = async (userId: string, githubRepoId: string, name:
     const publisherData: FirstTimeImportJobData = {
       repoId: githubRepoId,
       userId,
-      repoFullName: name;
+      repoFullName: name,
       installationId: user.githubInstallationId,
       defaultBranch: "main",
       cloneUrl: await getAuthenticatedRepoUrl(cloneUrl, user.githubInstallationId),

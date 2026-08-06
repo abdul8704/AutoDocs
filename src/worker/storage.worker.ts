@@ -8,9 +8,9 @@ import { rm } from "fs/promises"
 import prisma from "../prisma/prisma";
 import simpleGit, { SimpleGit } from "simple-git"
 import { checkForSpace } from "./codebase.service";
+import { generateFirstTimeDocs, webhookDocGen } from "../pipeline/pipeline.orchestrator"
 
 const TOTAL_SIZE = 5 * 1024 * 1024 * 1024; // 5gb max for storing local repo copies
-console.log(process.cwd());
 
 export const storageWorker = new Worker<StorageJobData>(
     'repo-storage-queue',
@@ -33,7 +33,7 @@ export const storageWorker = new Worker<StorageJobData>(
                 "-branch=main"
             ]);
 
-            // TODO: call docs gen service
+            await generateFirstTimeDocs(data.repoId, repoPath)
         }
         else if (job.name === "clone-deep-push") {
             const data = job.data as DeepClonePushJobData;
@@ -42,7 +42,7 @@ export const storageWorker = new Worker<StorageJobData>(
             const git: SimpleGit = simpleGit(path);
             await git.clone(data.cloneUrl, path);
 
-            // call layer 1 service
+            await webhookDocGen(data.repoId, path)
         }
         else if (job.name === "cleanup-repo") {
             const data = job.data as CleanupJobData;
