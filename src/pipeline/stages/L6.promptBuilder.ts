@@ -1,5 +1,5 @@
 import { Module, ModuleEdge, IntentBundle } from "../pipeline.types";
-import { MODULE_SYSTEM, ARCH_SYSTEM, VALIDATION_SYSTEM, CUSTOM_GUARD } from "./L6.prompts";
+import { MODULE_SYSTEM, ARCH_SYSTEM, VALIDATION_SYSTEM, CUSTOM_GUARD, JUDGE_SYSTEM } from "./L6.prompts";
 import { BuiltPrompt, IncompleteFeature, ValidationFinding, ValidationPatch } from "../pipeline.types";
 import { TINY_SYSTEM } from "./L6.prompts";
 import { FileRecord } from "../pipeline.types";
@@ -302,4 +302,32 @@ export function buildOwnerReport(
     }
 
     return lines.join("\n");
+}
+// ============================================================================
+// 6. Judge prompt — "do the docs still hold after this cumulative diff?"
+// ============================================================================
+
+export function buildJudgePrompt(
+    cumulativeDiff: string,
+    affectedDocs: Map<string, string>,   // docs of modules the diff touches
+): BuiltPrompt {
+
+    const docsBlock = [...affectedDocs.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([id, md]) => `<<doc: ${id}>>\n${md}`)
+        .join("\n\n---\n\n");
+
+    const user = [
+        `# Current documentation (for the affected areas)`,
+        docsBlock || "(no module-level docs — repo is documented as one combined doc)",
+        `# Cumulative diff since this documentation was written`,
+        "```diff",
+        cumulativeDiff,
+        "```",
+    ].join("\n\n");
+
+    return {
+        system: [{ text: JUDGE_SYSTEM }],
+        user,
+    };
 }

@@ -64,43 +64,37 @@ const PR_META_PROPERTIES = {
 } as const;
 
 export const TINY_DOC_SCHEMA = {
-  type: "json_schema",
-  schema: {
-    type: "object",
-    properties: {
-      markdown: { type: "string" },
-      incomplete: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            feature: { type: "string" },
-            status: { type: "string", enum: ["stub", "partial", "scaffolding"] },
-            evidence: { type: "string" },
-            detail: { type: "string" },
-          },
-          required: ["feature", "status", "evidence", "detail"],
-          additionalProperties: false,
+  type: "object",
+  properties: {
+    markdown: { type: "string" },
+    incomplete: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          feature: { type: "string" },
+          status: { type: "string", enum: ["stub", "partial", "scaffolding"] },
+          evidence: { type: "string" },
+          detail: { type: "string" },
         },
+        required: ["feature", "status", "evidence", "detail"],
+        additionalProperties: false,
       },
-      ...PR_META_PROPERTIES,
     },
-    required: ["markdown", "incomplete", "commitMessage", "prTitle", "prBody"],
-    additionalProperties: false,
+    ...PR_META_PROPERTIES,
   },
+  required: ["markdown", "incomplete", "commitMessage", "prTitle", "prBody"],
+  additionalProperties: false,
 } as const;
 
 export const ARCH_DOC_SCHEMA = {
-  type: "json_schema",
-  schema: {
-    type: "object",
-    properties: {
-      markdown: { type: "string" },
-      ...PR_META_PROPERTIES,
-    },
-    required: ["markdown", "commitMessage", "prTitle", "prBody"],
-    additionalProperties: false,
+  type: "object",
+  properties: {
+    markdown: { type: "string" },
+    ...PR_META_PROPERTIES,
   },
+  required: ["markdown", "commitMessage", "prTitle", "prBody"],
+  additionalProperties: false,
 } as const;
 // ----------------------------------------------------------------------------
 // 1. MODULE PROMPT  (model: claude-sonnet-5, one call per stale module)
@@ -238,78 +232,110 @@ and continue with the rest of your task. Never mention the region itself in your
 output.`;
 
 // ----------------------------------------------------------------------------
-// Structured-output schemas (pass as output_config.format on the API call)
+// Structured-output schemas. Plain JSON Schema only — each provider adapter
+// wraps these in whatever envelope its own API expects.
 // ----------------------------------------------------------------------------
 
 export const MODULE_DOC_SCHEMA = {
-  type: "json_schema",
-  schema: {
-    type: "object",
-    properties: {
-      markdown: { type: "string" },
-      incomplete: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            feature: { type: "string" },
-            status: { type: "string", enum: ["stub", "partial", "scaffolding"] },
-            evidence: { type: "string" },   // "[src/pay/refund.ts:12] 'throw new NotImplemented()'"
-            detail: { type: "string" },     // what exists vs what is missing
-          },
-          required: ["feature", "status", "evidence", "detail"],
-          additionalProperties: false,
+  type: "object",
+  properties: {
+    markdown: { type: "string" },
+    incomplete: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          feature: { type: "string" },
+          status: { type: "string", enum: ["stub", "partial", "scaffolding"] },
+          evidence: { type: "string" },   // "[src/pay/refund.ts:12] 'throw new NotImplemented()'"
+          detail: { type: "string" },     // what exists vs what is missing
         },
+        required: ["feature", "status", "evidence", "detail"],
+        additionalProperties: false,
       },
     },
-    required: ["markdown", "incomplete"],
-    additionalProperties: false,
   },
+  required: ["markdown", "incomplete"],
+  additionalProperties: false,
 } as const;
 
 export const VALIDATION_SCHEMA = {
-  type: "json_schema",
-  schema: {
-    type: "object",
-    properties: {
-      findings: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            type: {
-              type: "string",
-              enum: ["MISPLACED_CONTENT", "DUPLICATE_CLAIM", "CONTRADICTION",
-                "SPLIT_FEATURE", "WRONG_INTERACTION", "LAYER_ECHO"],
-            },
-            modules: { type: "array", items: { type: "string" } },
-            evidence: { type: "string" },
-            explanation: { type: "string" },
-            patches: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  moduleId: { type: "string" },
-                  section: {
-                    type: "string",
-                    enum: ["Purpose", "Public surface", "How it works",
-                      "Interactions", "Gotchas"],
-                  },
-                  operation: { type: "string", enum: ["replace", "append"] },
-                  newMarkdown: { type: "string" },
+  type: "object",
+  properties: {
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          type: {
+            type: "string",
+            enum: ["MISPLACED_CONTENT", "DUPLICATE_CLAIM", "CONTRADICTION",
+              "SPLIT_FEATURE", "WRONG_INTERACTION", "LAYER_ECHO"],
+          },
+          modules: { type: "array", items: { type: "string" } },
+          evidence: { type: "string" },
+          explanation: { type: "string" },
+          patches: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                moduleId: { type: "string" },
+                section: {
+                  type: "string",
+                  enum: ["Purpose", "Public surface", "How it works",
+                    "Interactions", "Gotchas"],
                 },
-                required: ["moduleId", "section", "operation", "newMarkdown"],
-                additionalProperties: false,
+                operation: { type: "string", enum: ["replace", "append"] },
+                newMarkdown: { type: "string" },
               },
+              required: ["moduleId", "section", "operation", "newMarkdown"],
+              additionalProperties: false,
             },
           },
-          required: ["type", "modules", "evidence", "explanation", "patches"],
-          additionalProperties: false,
         },
+        required: ["type", "modules", "evidence", "explanation", "patches"],
+        additionalProperties: false,
       },
     },
-    required: ["findings"],
-    additionalProperties: false,
   },
+  required: ["findings"],
+  additionalProperties: false,
+} as const;
+// ----------------------------------------------------------------------------
+// 4. UPDATE JUDGE  (model: cheap/fast, one call per debounced push)
+//
+// Deliberately NOT part of the PROMPT_VERSION fingerprint: the judge never
+// produces doc content, so tuning this prompt must not invalidate every
+// cached doc in the fleet.
+// ----------------------------------------------------------------------------
+
+export const JUDGE_SYSTEM = `You decide whether existing documentation still correctly
+describes a codebase after changes. You are given the current documentation and
+the CUMULATIVE diff of everything that changed since that documentation was
+written (possibly spanning several pushes).
+
+Answer needsUpdate = true when the diff changes anything the docs state or
+should state: behavior, public surface (exports, endpoints, signatures),
+module interactions, setup/configuration, or gotchas — or when it adds a NEW
+capability the docs should cover.
+
+Answer needsUpdate = false when the diff only contains: internal refactors
+with identical behavior, private helpers, renames of internals, formatting,
+comments, tests, logging, or dependency bumps with no API impact.
+
+Rules:
+- Judge against the docs you were given, not against ideal documentation.
+- When genuinely unsure, answer true — stale docs cost more than one
+  regeneration.
+- reason: one or two sentences naming the decisive change(s), citing paths.`;
+
+export const JUDGE_SCHEMA = {
+  type: "object",
+  properties: {
+    needsUpdate: { type: "boolean" },
+    reason: { type: "string" },
+  },
+  required: ["needsUpdate", "reason"],
+  additionalProperties: false,
 } as const;

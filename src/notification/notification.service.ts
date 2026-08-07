@@ -95,3 +95,41 @@ export const resolveRunStatus = (
 
     return "SUCCESS";
 }
+
+// ============================================================================
+// Push evaluations — one row per debounced push, ALWAYS written, whatever the
+// judge decided. This is the user's answer to "why didn't my push update the
+// docs?" without reading worker logs.
+// ============================================================================
+
+export interface PushEvalNotification {
+    repoId: string;                  // github_repo_id
+    action: "SKIPPED_IRRELEVANT" | "SKIPPED_BY_JUDGE" | "NEEDS_UPDATE" | "ERROR";
+    detail: string;                  // judge reason / skip detail / error message
+    logs: Record<string, unknown>;
+}
+
+const PUSH_EVAL_MESSAGES: Record<PushEvalNotification["action"], (detail: string) => string> = {
+    SKIPPED_IRRELEVANT: (d) => `Push received — no documentation-relevant changes. ${d}`,
+    SKIPPED_BY_JUDGE: (d) => `Push reviewed — docs still accurate, no update needed. ${d}`,
+    NEEDS_UPDATE: (d) => `Push reviewed — documentation update queued. ${d}`,
+    ERROR: (d) => `Push evaluation failed: ${d}`,
+};
+
+// Same swallow-own-errors contract as recordDocRun.
+export const recordPushEvaluation = async (input: PushEvalNotification): Promise<void> => {
+
+    try {
+        await prisma.notification.create({
+            data: {
+                repo_id: input.repoId,
+                kind: "PUSH_EVAL",
+                status: input.action === "ERROR" ? "FAILED" : "SUCCESS",
+                message: PUSH_EVAL_MESSAGES[input.action](input.detail),
+                logs: JSON.parse(JSON.stringify(input.logs)),
+            },
+        });
+    } catch (err) {
+        console.error(`[Notification] failed to record push evaluation for ${input.repoId}:`, err);
+    }
+}

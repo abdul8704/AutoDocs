@@ -7,7 +7,9 @@ dotenv.config();
 // callers go through generate(role, prompt) and stay provider-agnostic.
 const llmEnvSchema = z.object({
 
-    ANTHROPIC_API_KEY: z.string().min(1, "ANTHROPIC_API_KEY is required"),
+    // Optional while the dummy provider is active (see llm.config.ts). The
+    // anthropic provider demands it on its first call instead of at boot.
+    ANTHROPIC_API_KEY: z.string().min(1).optional(),
 
     // Optional operational overrides — defaults live in llm.config.ts.
     LLM_CONCURRENCY: z.coerce.number().int().min(1).max(16).optional(),

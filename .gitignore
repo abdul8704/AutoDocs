@@ -4,3 +4,4 @@ codebases
 .env
 /src/generated/prisma
 .vscode
+src/prsima/migrations

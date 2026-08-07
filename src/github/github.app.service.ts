@@ -355,25 +355,54 @@ export const raisePR = async (
     parents: [parentCommitSha],
   });
 
-  // 6. Create branch for the PR
-  await octokit.rest.git.createRef({
-    owner,
-    repo: repoName,
-    ref: `refs/heads/${newBranch}`,
-    sha: newCommit.sha,
-  });
+  // 6. Create the PR branch — or force-move it if it already exists from a
+  // previous docs run (retries / repeated webhook updates reuse one branch).
+  try {
+    await octokit.rest.git.createRef({
+      owner,
+      repo: repoName,
+      ref: `refs/heads/${newBranch}`,
+      sha: newCommit.sha,
+    });
+  } catch (err: any) {
+    if (err?.status !== 422) throw err;      // 422 = ref already exists
+    await octokit.rest.git.updateRef({
+      owner,
+      repo: repoName,
+      ref: `heads/${newBranch}`,
+      sha: newCommit.sha,
+      force: true,
+    });
+  }
 
-
-  // 8. Open the Pull Request
-  const { data: pullRequest } = await octokit.rest.pulls.create({
-    owner,
-    repo: repoName,
-    title: docResult.prTitle,
-    body: docResult.prBody,
-    head: newBranch,
-    base: baseBranch,
-  });
-
-  return pullRequest.html_url;
+  // 7. Open the Pull Request — or refresh the one already open for this branch.
+  try {
+    const { data: pullRequest } = await octokit.rest.pulls.create({
+      owner,
+      repo: repoName,
+      title: docResult.prTitle,
+      body: docResult.prBody,
+      head: newBranch,
+      base: baseBranch,
+    });
+    return pullRequest.html_url;
+  } catch (err: any) {
+    if (err?.status !== 422) throw err;      // 422 = PR already exists for head
+    const { data: open } = await octokit.rest.pulls.list({
+      owner,
+      repo: repoName,
+      state: "open",
+      head: `${owner}:${newBranch}`,
+    });
+    if (open.length === 0) throw err;
+    const { data: updated } = await octokit.rest.pulls.update({
+      owner,
+      repo: repoName,
+      pull_number: open[0].number,
+      title: docResult.prTitle,
+      body: docResult.prBody,
+    });
+    return updated.html_url;
+  }
 
 }

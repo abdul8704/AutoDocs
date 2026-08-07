@@ -41,6 +41,28 @@ const isIntentFile = (rel: string): boolean => {
     return false;
 };
 
+/**
+ * Path-only relevance check — no filesystem access. Used by the webhook
+ * pipeline to triage a git diff BEFORE any cloning or LLM spend: a push whose
+ * changed paths are all irrelevant (lockfiles, images, excluded dirs) can be
+ * dropped for free. Must stay in sync with getRepoFiles' classification.
+ */
+export const isRelevantPath = (rel: string): boolean => {
+
+    const normalized = rel.replace(/\\/g, "/");
+    const ext = path.extname(normalized).toLowerCase();
+
+    if (normalized.split("/").some(p => EXCLUDE_DIRS.has(p))) {
+        return false;
+    }
+
+    if (EXCLUDE_FILES.has(path.basename(normalized))) {
+        return false;
+    }
+
+    return CODE_EXTS.has(ext) || KEEP_NONCODE.has(ext) || isIntentFile(normalized);
+};
+
 export const getRepoFiles = async (git: SimpleGit, repoPath: string) => {
     const git_ls = await git.raw(["ls-files"]);
     const files: string[] = git_ls

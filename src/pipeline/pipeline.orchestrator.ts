@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import nodePath from "node:path";
-import simpleGit from "simple-git";
+import simpleGit, { SimpleGit } from "simple-git";
 
 import prisma from "../prisma/prisma";
 import { generate, llmConcurrency } from "../LLM/index";
@@ -102,7 +102,9 @@ export const generateFirstTimeDocs = async (
 
     // ---- L5a: size decision — before any grouping/graph work ------------------
     if (isTinyRepo([...codeFiles, ...others])) {
-        return await runTinyPath(repoId, codeFiles, others, intent, readFile, custom, effectiveVersion, warnings);
+        const tinyResult = await runTinyPath(repoId, codeFiles, others, intent, readFile, custom, effectiveVersion, warnings);
+        await persistDocsPointer(repoId, git, warnings);
+        return tinyResult;
     }
 
     // ---- L2/L3: deterministic layer -------------------------------------------
@@ -268,6 +270,8 @@ export const generateFirstTimeDocs = async (
         fileIndex[fileName] = moduleId;
     }
 
+    await persistDocsPointer(repoId, git, warnings);
+
     return {
         route: "NORMAL",
         moduleDocCount: updatedDocs.size,
@@ -366,9 +370,27 @@ const runTinyPath = async (
 // same flow -> only changed modules regenerate.
 // ============================================================================
 
-export const webhookDocGen = async (repoId: string, path: string): Promise<void> => {
-    // TODO: debounce merge + git diff (for logging/early-exit), then reuse
-    // the same engine: await generateFirstTimeDocs(repoId, path)
-    void repoId;
-    void path;
+// ============================================================================
+// The docs pointer: Repo.last_processed_commit = the SHA these docs describe.
+// The engine is the ONLY writer — pointer and docs can never disagree. The
+// webhook pipeline (pipeline.webhook.ts) reads it to pin the local clone and
+// compute cumulative diffs.
+// ============================================================================
+
+const persistDocsPointer = async (
+    githubRepoId: string,
+    git: SimpleGit,
+    warnings: string[],
+): Promise<void> => {
+
+    try {
+        const sha = (await git.revparse(["HEAD"])).trim();
+
+        await prisma.repo.update({
+            where: { github_repo_id: githubRepoId },
+            data: { last_processed_commit: sha },
+        });
+    } catch {
+        warnings.push("failed to persist the docs pointer (last_processed_commit)");
+    }
 };

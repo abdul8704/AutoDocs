@@ -1,6 +1,6 @@
 // Neutral types — nothing Anthropic-specific may appear in this file.
 
-export type LlmRole = "tinyDoc" | "moduleDoc" | "validation" | "archDoc";
+export type LlmRole = "tinyDoc" | "moduleDoc" | "validation" | "archDoc" | "updateJudge";
 
 export interface SystemBlock {
     text: string;

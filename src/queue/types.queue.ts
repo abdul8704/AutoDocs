@@ -45,10 +45,12 @@ export interface PushClassifyJobData {
 export interface DocUpdateJobData {
   repoId: string;
   repoFullName: string;
-  affectedDocs: string[];
+  affectedDocs: string[];   // changed paths, for logging/PR context
   beforeSha: string;
   afterSha: string;
   userId: string;
+  installationId: number;   // to mint a fresh clone token + open the PR
+  defaultBranch: string;    // PR base branch
   customPrompt?: string;
 }
 

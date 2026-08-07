@@ -139,3 +139,8 @@ export interface EditResult {
   skippedPatches: ValidationPatch[];     // unknown module / missing section
   flaggedFindings: ValidationFinding[];  // findings with no patches -> owner report
 }
+/** Verdict of the push update-judge (JUDGE_SCHEMA). */
+export interface JudgeResult {
+  needsUpdate: boolean;
+  reason: string;
+}

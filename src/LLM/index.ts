@@ -1,9 +1,11 @@
-import { LLM_CONFIG } from "./llm.config";
+import { LLM_CONFIG, ProviderName } from "./llm.config";
 import { LlmPrompt, LlmResult, LlmRole, LlmProvider } from "./llm.types";
 import { anthropicProvider } from "./providers/anthropic.provider";
+import { dummyProvider } from "./providers/dummy.provider";
 
-const PROVIDERS: Record<string, LlmProvider> = {
+const PROVIDERS: Record<ProviderName, LlmProvider> = {
     anthropic: anthropicProvider,
+    dummy: dummyProvider,
 };
 
 /**

@@ -5,7 +5,7 @@ import { CodebaseChangeEvent, GitFetchResponse } from "../types/repo.types";
 import prisma from "../prisma/prisma";
 import * as githubAppService from "./github.app.service"
 
-import { publishCleanup, publishDeepCloneForPush } from "../queue/publishers"
+import { publishCleanup, publishDeepCloneForPush, publishPushForClassification } from "../queue/publishers"
 import { CleanupJobData, DeepClonePushJobData } from "../queue/types.queue";
 
 
@@ -66,11 +66,20 @@ export const githubWebhookHandlerService = async (payload: any) => {
         //    return res.status(200).send("Quota exceeded");
         // }
 
-        console.log(`🚀 Triggering doc update for imported repo: ${importedRepo.user.name}`);
-        console.log(`Commit hash: ${payload.after}`);
+        console.log(`🚀 Queueing push evaluation for: ${importedRepo.full_name} @ ${payload.after}`);
 
-        // 4. CALL YOUR DOC GENERATION / SIMPLE-GIT SERVICE HERE
-        // await processRepoUpdate(importedRepo.id, importedRepo.installation_id, payload.after);
+        // Publisher is debounced (10-min window, per repo+branch): rapid pushes
+        // merge into one evaluation, keeping the earliest beforeSha.
+        await publishPushForClassification({
+            repoId: importedRepo.github_repo_id,
+            repoFullName: importedRepo.full_name ?? payload.repository.full_name,
+            branch,
+            defaultBranch: payload.repository.default_branch,
+            beforeSha: payload.before,
+            afterSha: payload.after,
+            installationId: importedRepo.installation_id,
+            userId: importedRepo.user_id,
+        });
     }
 }
 

@@ -2,9 +2,23 @@ import Anthropic from "@anthropic-ai/sdk";
 import { LlmPrompt, LlmProvider, LlmUsage } from "../llm.types";
 import { llmEnv } from "../llm.env";
 
-// Key handling lives HERE and nowhere else — validated by llm.env at startup,
-// so a missing key fails loudly on boot instead of on the first LLM call.
-const client = new Anthropic({ apiKey: llmEnv.ANTHROPIC_API_KEY });
+// Key handling lives HERE and nowhere else. Built on first use rather than at
+// import, so running the dummy provider needs no Anthropic key at all.
+let client: Anthropic | undefined;
+
+function getClient(): Anthropic {
+
+    if (!llmEnv.ANTHROPIC_API_KEY) {
+        throw new Error(
+            "ANTHROPIC_API_KEY is required to use the anthropic provider " +
+            "(set it, or switch ACTIVE_PROVIDER back to \"dummy\" in llm.config.ts)",
+        );
+    }
+
+    client ??= new Anthropic({ apiKey: llmEnv.ANTHROPIC_API_KEY });
+
+    return client;
+}
 
 export const anthropicProvider: LlmProvider = {
 
@@ -22,11 +36,13 @@ export const anthropicProvider: LlmProvider = {
             ...(block.cache ? { cache_control: { type: "ephemeral" as const } } : {}),
         }));
 
-        const response = await client.messages.create({
+        const response = await getClient().messages.create({
             model,
             max_tokens: maxTokens,
             system,
             messages: [{ role: "user", content: prompt.user }],
+            // Callers hand over plain JSON Schema; the "json_schema" envelope is
+            // Anthropic's wire syntax, so it gets added HERE and only here.
             ...(schema ? { output_config: { format: { type: "json_schema" as const, schema } } } : {}),
         });
 

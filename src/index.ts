@@ -8,6 +8,11 @@ import { logger } from "./utils/logger.utils"
 import { errorMiddleware } from "./middleware/error.middleware"
 import { authenticate } from "./auth/auth.middleware"
 
+// Workers run in-process with the API server for now: importing them
+// instantiates the BullMQ consumers (storage, push-classify, doc-generation).
+import "./worker/storage.worker"
+import "./worker/docs.worker"
+
 import githubRouter from "./github/webhook.routes"
 import githubAppRouter from "./github/github.app.routes"
 import authRouter from "./auth/auth.routes"

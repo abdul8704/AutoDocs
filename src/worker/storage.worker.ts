@@ -8,7 +8,7 @@ import { rm } from "fs/promises"
 import prisma from "../prisma/prisma";
 import simpleGit, { SimpleGit } from "simple-git"
 import { checkForSpace } from "./codebase.service";
-import { DocGenResult, generateFirstTimeDocs, webhookDocGen } from "../pipeline/pipeline.orchestrator"
+import { DocGenResult, generateFirstTimeDocs } from "../pipeline/pipeline.orchestrator"
 import { raisePR } from "../github/github.app.service";
 import { recordDocRun, buildRunMessage, resolveRunStatus } from "../notification/notification.service";
 
@@ -73,7 +73,7 @@ export const storageWorker = new Worker<StorageJobData>(
                 );
 
                 stageReached = "raise-pr";
-                prUrl = await raisePR(data.repoId, "main", "doc-update", result);
+                prUrl = await raisePR(data.repoId, data.defaultBranch, "autodocs/update", result);
 
                 stageReached = "done";
                 console.log(`PR raised: ${prUrl}`);
@@ -116,13 +116,14 @@ export const storageWorker = new Worker<StorageJobData>(
             }
         }
         else if (job.name === "clone-deep-push") {
+            // LEGACY: push handling moved to the classify/docgen workers
+            // (docs.worker.ts) — they own clone restore via evaluatePush, so a
+            // blind re-clone here would clobber the pinned docs pointer.
             const data = job.data as DeepClonePushJobData;
-            const path = constructPath(data.repoId);
-
-            const git: SimpleGit = simpleGit(path);
-            await git.clone(data.cloneUrl, path);
-
-            await webhookDocGen(data.repoId, path)
+            console.warn(
+                `[StorageWorker] 'clone-deep-push' is deprecated (repo ${data.repoId}); ` +
+                `push handling now lives on push-classify-queue`,
+            );
         }
         else if (job.name === "cleanup-repo") {
             const data = job.data as CleanupJobData;

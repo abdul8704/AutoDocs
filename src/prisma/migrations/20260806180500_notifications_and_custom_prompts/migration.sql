@@ -3,6 +3,9 @@ ALTER TABLE "Repo" ADD COLUMN     "arch_prompt" TEXT,
 ADD COLUMN     "module_prompt" TEXT,
 ADD COLUMN     "prompts_updated_at" TIMESTAMP(3);
 
+-- CreateIndex
+CREATE UNIQUE INDEX "Repo_github_repo_id_key" ON "Repo"("github_repo_id");
+
 -- CreateTable
 CREATE TABLE "Notification" (
     "id" TEXT NOT NULL,

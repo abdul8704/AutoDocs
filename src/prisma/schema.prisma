@@ -91,7 +91,9 @@ model ModuleDoc {
   created_at   DateTime @default(now())
   updated_at   DateTime @updatedAt
 
-  repo Repo @relation(fields: [repo_id], references: [id], onDelete: Cascade)
+  // repo_id here is the github_repo_id — the identifier queue payloads and the
+  // pipeline carry everywhere (same convention as Notification).
+  repo Repo @relation(fields: [repo_id], references: [github_repo_id], onDelete: Cascade)
 
   @@unique([repo_id, module_id])
   @@index([repo_id])
@@ -125,7 +127,13 @@ model RepoDocState {
   prompt_version  String?
   resolution_rate Float?
   route_kind      String? // "TINY" | "NORMAL" — hysteresis for threshold flapping later
+
+  // Consecutive "no update needed" verdicts from the push judge. Reset to 0 on
+  // every regeneration; at MAX_JUDGE_SKIPS the next push regenerates unjudged.
+  judge_skip_count Int @default(0)
+
   updated_at      DateTime @updatedAt
 
-  repo Repo @relation(fields: [repo_id], references: [id], onDelete: Cascade)
+  // repo_id here is the github_repo_id (same convention as ModuleDoc/Notification).
+  repo Repo @relation(fields: [repo_id], references: [github_repo_id], onDelete: Cascade)
 }
