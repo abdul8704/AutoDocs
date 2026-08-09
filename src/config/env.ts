@@ -4,6 +4,11 @@ dotenv.config();
 
 const envSchema = z.object({
     PORT: z.coerce.number().default(5000),
+    NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+
+    // "debug" surfaces per-file and per-module-doc lines; "info" is the
+    // stage-level timeline the pipeline logs by default.
+    LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("debug"),
     GITHUB_WEBHOOK_SECRET: z.string(),
     GITHUB_CLIENT_ID: z.string(),
     GITHUB_CLIENT_SECRET: z.string(),

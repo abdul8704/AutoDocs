@@ -4,6 +4,8 @@ import simpleGit, { SimpleGit } from "simple-git";
 
 import prisma from "../prisma/prisma";
 import { generate, llmConcurrency } from "../LLM/index";
+import { scopedLogger, startTimer } from "../utils/logger.utils";
+import { markStage } from "./pipeline.progress";
 
 import {
     FileRecord, IntentBundle, Module, ModuleDocResult, ValidationFinding, IncompleteFeature,
@@ -72,17 +74,46 @@ export const generateFirstTimeDocs = async (
     repoPath: string,
 ): Promise<DocGenResult> => {
 
+    const log = scopedLogger("engine", { repo: repoId });
+    const runElapsed = startTimer();
+
+    log.info({ repoPath }, "engine start");
+
     const warnings: string[] = [];
 
     // ---- L0: the owner's custom instructions -------------------------------
     // effectiveVersion folds the instructions into the staleness key, so editing
     // them regenerates the docs they influenced.
+    await markStage(repoId, "CUSTOM_INSTRUCTIONS");
+
     const { custom, effectiveVersion } = await loadCustomInstructions(repoId, warnings);
 
+    log.info(
+        {
+            archPrompt: Boolean(custom.arch),
+            modulePrompt: Boolean(custom.module),
+            effectiveVersion,
+        },
+        "L0 custom instructions loaded",
+    );
+
     // ---- L0/L1: inventory --------------------------------------------------
+    await markStage(repoId, "INVENTORY");
+
     const git = simpleGit(repoPath);
+    const inventoryElapsed = startTimer();
 
     const { codeFiles, intentFiles, others } = await getRepoFiles(git, repoPath);
+
+    log.info(
+        {
+            codeFiles: codeFiles.length,
+            intentFiles: intentFiles.length,
+            others: others.length,
+            ms: inventoryElapsed(),
+        },
+        `L1 inventory: ${codeFiles.length} code files, ${intentFiles.length} intent files, ${others.length} other`,
+    );
 
     // Cached reader: L3 reads every code file, L6 reads many again — one disk
     // hit per file. Repo-relative path in, source text out.
@@ -98,23 +129,51 @@ export const generateFirstTimeDocs = async (
     };
 
     // ---- L4: intent bundle (needed on BOTH routes) ---------------------------
+    await markStage(repoId, "INTENT_BUNDLE");
+
     const intent = buildIntentBundle(intentFiles, readFile);
 
+    log.info({ intentHash: intent.intentHash }, "L4 intent bundle built");
+
     // ---- L5a: size decision — before any grouping/graph work ------------------
+    await markStage(repoId, "ROUTING");
+
     if (isTinyRepo([...codeFiles, ...others])) {
+
+        log.info("L5a route=TINY — whole repo fits in one call, skipping L2/L3");
+
         const tinyResult = await runTinyPath(repoId, codeFiles, others, intent, readFile, custom, effectiveVersion, warnings);
         await persistDocsPointer(repoId, git, warnings);
+
+        log.info({ ms: runElapsed() }, "engine done (TINY)");
+
         return tinyResult;
     }
 
+    log.info("L5a route=NORMAL — grouping into modules");
+
     // ---- L2/L3: deterministic layer -------------------------------------------
+    await markStage(repoId, "GROUPING");
+
     const modules: Module[] = groupModules(codeFiles, others, { promptVersion: effectiveVersion });
     const fileToModule = buildFileToModuleIndex(modules);
+
+    log.info({ modules: modules.length }, `L2 grouped into ${modules.length} modules`);
+    log.debug({ moduleIds: modules.map(m => m.id) }, "L2 module ids");
+
+    await markStage(repoId, "IMPORT_GRAPH");
 
     const { edges, resolutionRate, fileImportCounts } =
         buildModuleEdges(codeFiles, readFile, fileToModule);
 
+    log.info(
+        { edges: edges.length, resolutionRate },
+        `L3 import graph: ${edges.length} edges, ${Math.round((resolutionRate ?? 0) * 100)}% of imports resolved`,
+    );
+
     // ---- L5b: staleness — empty table on a true first run => all stale --------
+    await markStage(repoId, "STALENESS");
+
     const storedRows = await prisma.moduleDoc.findMany({
         where: { repo_id: repoId },
         select: { module_id: true, input_hash: true },
@@ -125,11 +184,28 @@ export const generateFirstTimeDocs = async (
     const { staleModules, cachedModuleIds, deletedModuleIds } =
         computeStaleness(modules, storedHashes);
 
+    log.info(
+        {
+            stale: staleModules.length,
+            cached: cachedModuleIds.length,
+            deleted: deletedModuleIds.length,
+        },
+        `L5b staleness: ${staleModules.length} to regenerate, ${cachedModuleIds.length} from cache, ${deletedModuleIds.length} to delete`,
+    );
+
     // ---- L6a: module docs (fan-out, cache-warm-first, per-call persist) -------
     const moduleDocs = new Map<string, string>();
     const incompleteByModule = new Map<string, IncompleteFeature[]>();
 
+    // Progress is reported per COMPLETED module rather than per started one, so
+    // the counter the frontend polls never runs ahead of the docs on disk.
+    let modulesDone = 0;
+
     const generateOne = async (module: Module): Promise<void> => {
+
+        const moduleElapsed = startTimer();
+
+        log.debug({ module: module.id, files: module.files.length }, `module doc start: ${module.id}`);
 
         const prompt = buildModulePrompt(module, readFile, edges, intent, fileImportCounts, custom.module);
 
@@ -158,15 +234,44 @@ export const generateFirstTimeDocs = async (
                 incomplete: JSON.parse(JSON.stringify(data.incomplete)),
             },
         });
+
+        modulesDone++;
+
+        log.info(
+            { module: module.id, incomplete: data.incomplete.length, ms: moduleElapsed() },
+            `module doc ${modulesDone}/${staleModules.length}: ${module.id}`,
+        );
+
+        await markStage(repoId, "MODULE_DOCS", {
+            detail: `Writing module documentation — ${module.displayName}`,
+            done: modulesDone,
+            total: staleModules.length,
+        });
     };
 
     if (staleModules.length > 0) {
+
+        await markStage(repoId, "MODULE_DOCS", {
+            detail: `Writing documentation for ${staleModules.length} module${staleModules.length === 1 ? "" : "s"}`,
+            done: 0,
+            total: staleModules.length,
+        });
+
+        const fanOutElapsed = startTimer();
 
         // First call alone: it WRITES the shared prompt-prefix cache;
         // the concurrent rest then READ it at ~10% input price.
         await generateOne(staleModules[0]);
 
         await mapWithConcurrency(staleModules.slice(1), llmConcurrency(), generateOne);
+
+        log.info(
+            { modules: staleModules.length, concurrency: llmConcurrency(), ms: fanOutElapsed() },
+            `L6a all ${staleModules.length} module docs written`,
+        );
+    }
+    else {
+        log.info("L6a no stale modules — every module doc served from cache");
     }
 
     // Cached modules (crash-resume / re-run): load stored docs so validation
@@ -181,17 +286,28 @@ export const generateFirstTimeDocs = async (
             moduleDocs.set(row.module_id, row.markdown);
             incompleteByModule.set(row.module_id, row.incomplete as unknown as IncompleteFeature[]);
         }
+
+        log.info({ loaded: cachedRows.length }, `loaded ${cachedRows.length} cached module docs`);
     }
 
     // Docs whose module no longer exists (split/merge/deleted dirs).
     if (deletedModuleIds.length > 0) {
 
+        await markStage(repoId, "PRUNING", {
+            detail: `Removing ${deletedModuleIds.length} doc${deletedModuleIds.length === 1 ? "" : "s"} for modules that no longer exist`,
+        });
+
         await prisma.moduleDoc.deleteMany({
             where: { repo_id: repoId, module_id: { in: deletedModuleIds } },
         });
+
+        log.info({ deleted: deletedModuleIds }, `pruned ${deletedModuleIds.length} orphaned module docs`);
     }
 
     // ---- L6b: cross-doc validation -> apply patches -----------------------------
+    await markStage(repoId, "VALIDATION");
+
+    const validationElapsed = startTimer();
     const validationPrompt = buildValidationPrompt(moduleDocs, modules, edges);
 
     const { data: validation } = await generate<{ findings: ValidationFinding[] }>(
@@ -200,6 +316,16 @@ export const generateFirstTimeDocs = async (
 
     const { updatedDocs, appliedPatches, flaggedFindings } =
         applyValidationFindings(moduleDocs, validation.findings);
+
+    log.info(
+        {
+            findings: validation.findings.length,
+            applied: appliedPatches.length,
+            flagged: flaggedFindings.length,
+            ms: validationElapsed(),
+        },
+        `L6b validation: ${validation.findings.length} findings, ${appliedPatches.length} patches applied, ${flaggedFindings.length} flagged for the owner`,
+    );
 
     // Patched docs must be re-persisted (the per-call upsert stored pre-patch).
     if (appliedPatches.length > 0) {
@@ -213,9 +339,15 @@ export const generateFirstTimeDocs = async (
                 data: { markdown: updatedDocs.get(moduleId)! },
             });
         }
+
+        log.info({ patchedModules: [...patchedIds] }, `re-persisted ${patchedIds.size} patched module docs`);
     }
 
     // ---- L6c: architecture doc over the CORRECTED docs ---------------------------
+    await markStage(repoId, "ARCH_DOC");
+
+    const archElapsed = startTimer();
+
     const archPrompt = buildArchPrompt(
         updatedDocs,
         edges,
@@ -230,10 +362,19 @@ export const generateFirstTimeDocs = async (
     const { data: arch } = await generate<ArchDocResult>("archDoc", archPrompt, ARCH_DOC_SCHEMA);
     const archDoc = arch.markdown;
 
+    log.info({ chars: archDoc.length, ms: archElapsed() }, "L6c architecture doc written");
+
     // ---- Output 2: owner report ----------------------------------------------------
     const ownerReport = buildOwnerReport(incompleteByModule, flaggedFindings);
 
+    log.info({ hasOwnerReport: Boolean(ownerReport) },
+        ownerReport ? "owner report produced (unfinished work was excluded)" : "no owner report needed");
+
     // ---- Persist run-level state ------------------------------------------------------
+    // Only the doc ARTIFACTS here — the run's stage/status columns on this same
+    // row are owned by pipeline.progress and must not be clobbered.
+    await markStage(repoId, "PERSISTING");
+
     await prisma.repoDocState.upsert({
         where: { repo_id: repoId },
         create: {
@@ -271,6 +412,18 @@ export const generateFirstTimeDocs = async (
     }
 
     await persistDocsPointer(repoId, git, warnings);
+
+    log.info(
+        {
+            route: "NORMAL",
+            moduleDocs: updatedDocs.size,
+            regenerated: staleModules.length,
+            fromCache: cachedModuleIds.length,
+            warnings: warnings.length,
+            ms: runElapsed(),
+        },
+        `engine done (NORMAL): ${updatedDocs.size} module docs + architecture doc in ${runElapsed()}ms`,
+    );
 
     return {
         route: "NORMAL",
@@ -310,15 +463,29 @@ const runTinyPath = async (
     warnings: string[],
 ): Promise<DocGenResult> => {
 
+    const log = scopedLogger("engine", { repo: repoId });
+    const tinyElapsed = startTimer();
+
     // The tiny route emits one combined doc that is stored as arch_doc, so the
     // arch instructions are the ones that apply here.
+    await markStage(repoId, "TINY_DOC", {
+        detail: `Writing a combined document for ${codeFiles.length} source files`,
+    });
+
     const prompt = buildTinyPrompt(codeFiles, others, intent, readFile, custom.arch);
 
     const { data } = await generate<TinyDocResult>("tinyDoc", prompt, TINY_DOC_SCHEMA);
 
+    log.info(
+        { chars: data.markdown.length, incomplete: data.incomplete.length, ms: tinyElapsed() },
+        "TINY combined doc written",
+    );
+
     const ownerReport = buildOwnerReport(
         new Map([["(repo)", data.incomplete]]), [],
     );
+
+    await markStage(repoId, "PERSISTING");
 
     await prisma.repoDocState.upsert({
         where: { repo_id: repoId },
@@ -383,6 +550,8 @@ const persistDocsPointer = async (
     warnings: string[],
 ): Promise<void> => {
 
+    const log = scopedLogger("engine", { repo: githubRepoId });
+
     try {
         const sha = (await git.revparse(["HEAD"])).trim();
 
@@ -390,7 +559,10 @@ const persistDocsPointer = async (
             where: { github_repo_id: githubRepoId },
             data: { last_processed_commit: sha },
         });
-    } catch {
+
+        log.info({ sha }, `docs pointer advanced to ${sha.slice(0, 8)}`);
+    } catch (err) {
+        log.error({ err }, "failed to persist the docs pointer (last_processed_commit)");
         warnings.push("failed to persist the docs pointer (last_processed_commit)");
     }
 };

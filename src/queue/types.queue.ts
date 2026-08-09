@@ -21,13 +21,28 @@ export interface DeepClonePushJobData {
   userId: string;
 }
 
-/** Payload for deleting repo/user local folders and database entries */
-export interface CleanupJobData {
+/** Payload for deleting the local clone of a single repository */
+export interface CleanupRepoJobData {
+  action: "DELETE_REPO";
   repoId: string;
   path?: string;
   userId: string;
-  action: "DELETE_REPO" | "DELETE_USER";
 }
+
+/**
+ * Payload for deleting every local clone belonging to a user.
+ * The ids are carried in the job rather than looked up when it runs: account
+ * deletion removes the Repo rows (via cascade) before this job is picked up,
+ * so by then there is nothing left to query.
+ */
+export interface CleanupUserJobData {
+  action: "DELETE_USER";
+  userId: string;
+  repoIds: string[];
+}
+
+/** Payload for deleting repo/user local folders and database entries */
+export type CleanupJobData = CleanupRepoJobData | CleanupUserJobData;
 
 /** Payload for evaluating push events via Layer 3 Classifier LLM */
 export interface PushClassifyJobData {

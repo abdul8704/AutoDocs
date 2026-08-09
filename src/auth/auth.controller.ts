@@ -124,5 +124,10 @@ export const deleteUser = async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
 
     await authService.deleteUser(userId);
-    res.status(204).json({ success: true });
+
+    // The refresh sessions went with the user row, but the browser still holds the
+    // cookie - leaving it there means the next page load starts with a doomed
+    // /auth/refresh call instead of landing cleanly on the login page.
+    res.clearCookie(REFRESH_COOKIE_NAME, clearCookieOptions());
+    return res.status(204).end();
 }

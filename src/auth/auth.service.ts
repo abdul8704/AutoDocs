@@ -8,8 +8,13 @@ import {
 } from "./jwt.service";
 import { OAuthProfile } from "./providers/provider.types";
 import { HttpError } from "../utils/httpError.utils";
+import { publishCleanup } from "../queue/publishers";
+import { uninstallApp } from "../github/github.app.service";
+import { scopedLogger } from "../utils/logger.utils";
 
 const BCRYPT_ROUNDS = 10;
+
+const log = scopedLogger("account");
 
 // Finds an existing GitHub-linked user or creates one. This is the one piece that's
 // tied to the `githubId` column in the schema - a future Google provider would need
@@ -114,11 +119,51 @@ export const revokeRefreshToken = async (rawRefreshToken: string): Promise<void>
     });
 };
 
+/**
+ * Permanently deletes an account. The DB half is a single cascade off the User row
+ * (refresh sessions, repos, module docs, doc state, notifications all go with it),
+ * so the ids of everything living outside Postgres have to be read first.
+ *
+ * The two side effects after that cascade - wiping local clones and removing the
+ * GitHub App installation - are best-effort. Neither can be rolled back into an
+ * account that no longer exists, so a failure is logged for follow-up rather than
+ * surfaced to a user whose account is already gone.
+ */
 export const deleteUser = async (userId: string) => {
-    await prisma.user.delete({
-        where: {
-            id: userId
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { githubInstallationId: true },
+    });
+
+    if (!user) {
+        throw new HttpError(404, "Account not found");
+    }
+
+    const repos = await prisma.repo.findMany({
+        where: { user_id: userId },
+        select: { github_repo_id: true },
+    });
+    const repoIds = repos.map((repo) => repo.github_repo_id);
+
+    await prisma.user.delete({ where: { id: userId } });
+
+    log.info({ userId, repos: repoIds.length }, `deleted account ${userId}`);
+
+    if (repoIds.length > 0) {
+        try {
+            await publishCleanup({ action: "DELETE_USER", userId, repoIds });
+        } catch (err) {
+            log.error({ err, userId, repoIds },
+                "account deleted but local clone cleanup could not be queued");
         }
-    })
-    return;
+    }
+
+    if (user.githubInstallationId) {
+        try {
+            await uninstallApp(user.githubInstallationId);
+        } catch (err) {
+            log.error({ err, userId, installationId: user.githubInstallationId },
+                "account deleted but the GitHub App installation could not be removed");
+        }
+    }
 }

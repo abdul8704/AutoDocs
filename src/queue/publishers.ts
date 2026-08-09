@@ -1,7 +1,9 @@
-import { Queue } from "bullmq";
+import { DELAY_TIME_1, Queue } from "bullmq";
 import { redisConnection } from "../config/redis";
 import { FirstTimeImportJobData, DeepClonePushJobData, CleanupJobData, PushClassifyJobData, DocUpdateJobData } from "./types.queue"
 import type { StorageJobData } from "./types.queue.ts"
+
+const DELAY_TIME_QUEUE = 1000;
 
 /**
  * Queue 1: Disk & Storage Operations (Cloning + Deleting)
@@ -59,13 +61,31 @@ export const docGenQueue = new Queue<DocUpdateJobData>(
 // ======================================================
 
 /**
+ * A jobId only dedupes work that is still pending — once a job has finished,
+ * its id lingers in the completed/failed set and BullMQ silently drops any
+ * add() reusing it, so the caller gets back a stale job that will never run.
+ * Evicting the finished record first keeps the id meaningful for in-flight
+ * work while letting the same target be retried.
+ */
+const dropFinishedJob = async (queue: Queue<any>, jobId: string) => {
+  const existing = await queue.getJob(jobId);
+  if (!existing) return;
+
+  const state = await existing.getState();
+  if (state === "completed" || state === "failed") {
+    await existing.remove();
+  }
+};
+
+/**
  * Publisher 1A: First-Time Repo Import (Shallow Clone `--depth 1`)
  * Target: repoStorageQueue ('clone-first-time')
  */
 export const publishFirstTimeImport = async (data: FirstTimeImportJobData) => {
-  return await repoStorageQueue.add("clone-first-time", data, {
-    jobId: `clone-first-${data.repoId}`, // Idempotent per repository
-  });
+  const jobId = `clone-first-${data.repoId}`; // Idempotent per repository
+  await dropFinishedJob(repoStorageQueue, jobId);
+
+  return await repoStorageQueue.add("clone-first-time", data, { jobId });
 };
 
 /**
@@ -73,9 +93,10 @@ export const publishFirstTimeImport = async (data: FirstTimeImportJobData) => {
  * Target: repoStorageQueue ('clone-deep-push')
  */
 export const publishDeepCloneForPush = async (data: DeepClonePushJobData) => {
-  return await repoStorageQueue.add("clone-deep-push", data, {
-    jobId: `clone-deep-${data.repoId}-${data.afterSha}`,
-  });
+  const jobId = `clone-deep-${data.repoId}-${data.afterSha}`;
+  await dropFinishedJob(repoStorageQueue, jobId);
+
+  return await repoStorageQueue.add("clone-deep-push", data, { jobId });
 };
 
 /**
@@ -83,9 +104,13 @@ export const publishDeepCloneForPush = async (data: DeepClonePushJobData) => {
  * Target: repoStorageQueue ('cleanup-repo')
  */
 export const publishCleanup = async (data: CleanupJobData) => {
-  const targetId = data.repoId || data.userId;
+  const targetId = data.action === "DELETE_REPO" ? data.repoId : data.userId;
+  const jobId = `cleanup-${data.action.toLowerCase()}-${targetId}`;
+  await dropFinishedJob(repoStorageQueue, jobId);
+
   return await repoStorageQueue.add("cleanup-repo", data, {
-    jobId: `cleanup-${data.action.toLowerCase()}-${targetId}`,
+    jobId,
+    removeOnComplete: true,
   });
 };
 
@@ -111,7 +136,7 @@ export const publishPushForClassification = async (
 
   return await classifyQueue.add("classify-push", data, {
     jobId,
-    delay: 10 * 60 * 1000, // 10-Minute Debounce Delay
+    delay: DELAY_TIME_QUEUE, // 10-Minute Debounce Delay
   });
 };
 
@@ -120,7 +145,8 @@ export const publishPushForClassification = async (
  * Target: docGenQueue ('generate-doc-update')
  */
 export const publishDocUpdate = async (data: DocUpdateJobData) => {
-  return await docGenQueue.add("generate-doc-update", data, {
-    jobId: `docgen-${data.repoId}-${data.afterSha}`, // Idempotent per commit SHA
-  });
+  const jobId = `docgen-${data.repoId}-${data.afterSha}`; // Idempotent per commit SHA
+  await dropFinishedJob(docGenQueue, jobId);
+
+  return await docGenQueue.add("generate-doc-update", data, { jobId });
 };

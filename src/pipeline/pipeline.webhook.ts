@@ -3,6 +3,8 @@ import simpleGit, { SimpleGit } from "simple-git";
 
 import prisma from "../prisma/prisma";
 import { generate } from "../LLM/index";
+import { scopedLogger, startTimer, truncate } from "../utils/logger.utils";
+import { markStage } from "./pipeline.progress";
 import { JudgeResult } from "./pipeline.types";
 import { JUDGE_SCHEMA } from "./stages/L6.prompts";
 import { buildJudgePrompt } from "./stages/L6.promptBuilder";
@@ -43,16 +45,21 @@ const ensureLocalClone = async (
     repoPath: string,
     authedCloneUrl: string,
     docsSha: string | null,
+    log: ReturnType<typeof scopedLogger>,
 ): Promise<{ pointerValid: boolean }> => {
 
     if (fs.existsSync(`${repoPath}/.git`)) {
+        log.debug({ repoPath }, "local clone present — reusing it");
         return { pointerValid: true };
     }
+
+    log.info({ repoPath }, "local clone missing — re-cloning");
 
     await simpleGit().clone(authedCloneUrl, repoPath, ["--depth=1", "--single-branch"]);
 
     if (!docsSha) {
         // No docs pointer (first import never completed?) — nothing to pin to.
+        log.warn("no docs pointer stored — cannot pin the clone to a documented commit");
         return { pointerValid: false };
     }
 
@@ -63,10 +70,13 @@ const ensureLocalClone = async (
         // explicitly, then pin HEAD to it.
         await git.fetch(["origin", docsSha, "--depth=1"]);
         await git.checkout(docsSha);
+
+        log.info({ docsSha }, `clone re-pinned to the documented commit ${docsSha.slice(0, 8)}`);
         return { pointerValid: true };
-    } catch {
+    } catch (err) {
         // SHA unreachable (force-pushed away / GC'd). Pointer is lost — the
         // caller regenerates unconditionally, which self-heals the state.
+        log.warn({ docsSha, err }, "documented commit is unreachable — pointer lost");
         return { pointerValid: false };
     }
 };
@@ -174,50 +184,65 @@ export const evaluatePush = async (
     defaultBranch: string,
 ): Promise<PushEvaluation> => {
 
+    const log = scopedLogger("evaluate", { repo: githubRepoId });
+    const evalElapsed = startTimer();
+
+    log.info({ defaultBranch }, "push evaluation start");
+
     const repo = await prisma.repo.findUnique({
         where: { github_repo_id: githubRepoId },
         select: { last_processed_commit: true },
     });
 
     const docsSha = repo?.last_processed_commit ?? null;
-    const { pointerValid } = await ensureLocalClone(repoPath, authedCloneUrl, docsSha);
+
+    log.info({ docsSha }, docsSha
+        ? `docs currently describe commit ${docsSha.slice(0, 8)}`
+        : "no documented commit on record");
+
+    const { pointerValid } = await ensureLocalClone(repoPath, authedCloneUrl, docsSha, log);
+
+    await markStage(githubRepoId, "PUSH_FETCHING");
 
     const git: SimpleGit = simpleGit(repoPath);
 
     await git.fetch(["origin", defaultBranch, "--depth=1"]);
     const afterSha = (await git.revparse(["FETCH_HEAD"])).trim();
 
+    log.info({ afterSha }, `remote head is ${afterSha.slice(0, 8)}`);
+
     if (!pointerValid) {
-        return {
-            action: "NEEDS_UPDATE",
-            afterSha,
-            changedPaths: [],
-            reason: "docs pointer missing or unreachable — regenerating to re-establish state",
-        };
+        const reason = "docs pointer missing or unreachable — regenerating to re-establish state";
+        log.warn({ afterSha, ms: evalElapsed() }, `NEEDS_UPDATE: ${reason}`);
+        return { action: "NEEDS_UPDATE", afterSha, changedPaths: [], reason };
     }
 
     const headSha = (await git.revparse(["HEAD"])).trim();
 
     if (headSha === afterSha) {
-        return {
-            action: "SKIPPED_IRRELEVANT",
-            afterSha,
-            changedPaths: [],
-            detail: "remote head equals the documented state — nothing new",
-        };
+        const detail = "remote head equals the documented state — nothing new";
+        log.info({ afterSha, ms: evalElapsed() }, `SKIPPED_IRRELEVANT: ${detail}`);
+        return { action: "SKIPPED_IRRELEVANT", afterSha, changedPaths: [], detail };
     }
 
     // Cumulative tree-diff: documented state vs newest remote code.
+    await markStage(githubRepoId, "PUSH_DIFFING");
+
     const nameStatus = await git.raw(["diff", "--name-status", "HEAD", "FETCH_HEAD"]);
-    const changedPaths = parseNameStatus(nameStatus).filter(isRelevantPath);
+    const allPaths = parseNameStatus(nameStatus);
+    const changedPaths = allPaths.filter(isRelevantPath);
+
+    log.info(
+        { changed: allPaths.length, relevant: changedPaths.length },
+        `cumulative diff ${headSha.slice(0, 8)}..${afterSha.slice(0, 8)}: ` +
+        `${allPaths.length} changed paths, ${changedPaths.length} doc-relevant`,
+    );
+    log.debug({ paths: changedPaths }, "doc-relevant paths");
 
     if (changedPaths.length === 0) {
-        return {
-            action: "SKIPPED_IRRELEVANT",
-            afterSha,
-            changedPaths: [],
-            detail: "all changed paths are irrelevant to docs (lockfiles, assets, excluded dirs)",
-        };
+        const detail = "all changed paths are irrelevant to docs (lockfiles, assets, excluded dirs)";
+        log.info({ ms: evalElapsed() }, `SKIPPED_IRRELEVANT: ${detail}`);
+        return { action: "SKIPPED_IRRELEVANT", afterSha, changedPaths: [], detail };
     }
 
     const state = await prisma.repoDocState.findUnique({
@@ -233,33 +258,43 @@ export const evaluatePush = async (
 
     const changedLines = countChangedLines(diffText);
 
+    log.info(
+        { changedLines, diffChars: diffText.length, skipCount },
+        `diff is ${changedLines} +/- lines; judge has skipped ${skipCount} consecutive pushes`,
+    );
+
     // Cap check BEFORE spending judge tokens: when a regen is likely anyway,
     // judging first just means paying for both.
     if (skipCount >= MAX_JUDGE_SKIPS) {
-        return {
-            action: "NEEDS_UPDATE",
-            afterSha,
-            changedPaths,
-            reason: `judge skipped ${skipCount} consecutive pushes — cap reached, regenerating`,
-        };
+        const reason = `judge skipped ${skipCount} consecutive pushes — cap reached, regenerating`;
+        log.info({ ms: evalElapsed() }, `NEEDS_UPDATE (judge bypassed): ${reason}`);
+        return { action: "NEEDS_UPDATE", afterSha, changedPaths, reason };
     }
 
     if (changedLines > MAX_JUDGED_LINES) {
-        return {
-            action: "NEEDS_UPDATE",
-            afterSha,
-            changedPaths,
-            reason: `cumulative diff is ${changedLines} lines (> ${MAX_JUDGED_LINES}) — too large to judge`,
-        };
+        const reason = `cumulative diff is ${changedLines} lines (> ${MAX_JUDGED_LINES}) — too large to judge`;
+        log.info({ ms: evalElapsed() }, `NEEDS_UPDATE (judge bypassed): ${reason}`);
+        return { action: "NEEDS_UPDATE", afterSha, changedPaths, reason };
     }
 
     // The judge: current docs + cumulative diff -> { needsUpdate, reason }.
+    await markStage(githubRepoId, "PUSH_JUDGING");
+
     const affectedDocs = await loadAffectedDocs(githubRepoId, changedPaths);
+    const judgeElapsed = startTimer();
+
+    log.info({ affectedDocs: [...affectedDocs.keys()] },
+        `judging against ${affectedDocs.size} affected doc${affectedDocs.size === 1 ? "" : "s"}`);
 
     const { data: verdict } = await generate<JudgeResult>(
         "updateJudge",
         buildJudgePrompt(diffText, affectedDocs),
         JUDGE_SCHEMA,
+    );
+
+    log.info(
+        { needsUpdate: verdict.needsUpdate, ms: judgeElapsed() },
+        `judge verdict: ${verdict.needsUpdate ? "update needed" : "docs still accurate"} — ${truncate(verdict.reason)}`,
     );
 
     if (!verdict.needsUpdate) {
@@ -271,6 +306,9 @@ export const evaluatePush = async (
             data: { judge_skip_count: { increment: 1 } },
         }).catch(() => { /* no doc state yet -> nothing to increment */ });
 
+        log.info({ skipCount: skipCount + 1, ms: evalElapsed() },
+            `SKIPPED_BY_JUDGE (skip ${skipCount + 1}/${MAX_JUDGE_SKIPS})`);
+
         return {
             action: "SKIPPED_BY_JUDGE",
             afterSha,
@@ -279,6 +317,8 @@ export const evaluatePush = async (
             skipCount: skipCount + 1,
         };
     }
+
+    log.info({ ms: evalElapsed() }, `NEEDS_UPDATE: ${truncate(verdict.reason)}`);
 
     return { action: "NEEDS_UPDATE", afterSha, changedPaths, reason: verdict.reason };
 };
@@ -295,12 +335,19 @@ export const applyDocUpdate = async (
     defaultBranch: string,
 ): Promise<DocUpdateOutcome> => {
 
+    const log = scopedLogger("docupdate", { repo: githubRepoId });
+
     const git: SimpleGit = simpleGit(repoPath);
 
     // Re-fetch: time may have passed since evaluation (queue latency), and
     // taking the newest head here just means fewer runs later.
+    await markStage(githubRepoId, "CHECKOUT");
+
     await git.fetch(["origin", defaultBranch, "--depth=1"]);
     await git.checkout("FETCH_HEAD");
+
+    const checkedOut = (await git.revparse(["HEAD"])).trim();
+    log.info({ sha: checkedOut }, `checked out ${checkedOut.slice(0, 8)} — handing off to the engine`);
 
     const result = await generateFirstTimeDocs(githubRepoId, repoPath);
 
@@ -312,6 +359,8 @@ export const applyDocUpdate = async (
         where: { repo_id: githubRepoId },
         data: { judge_skip_count: 0 },
     });
+
+    log.info({ newSha }, "judge skip counter reset");
 
     return { result, newSha };
 };

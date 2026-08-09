@@ -46,4 +46,4 @@ app.use(errorMiddleware);
 
 const PORT: number = Number(env.PORT) || 5000
 
-app.listen(PORT, () => logger.info("Server listening at port ", PORT));
+app.listen(PORT, () => logger.info({ port: PORT, env: env.NODE_ENV }, `server listening on port ${PORT}`));

@@ -6,6 +6,10 @@ import { scanCustomPrompt } from "../utils/promptGuard.utils";
 import { publishFirstTimeImport } from "../queue/publishers"
 import { FirstTimeImportJobData } from "../queue/types.queue";
 import { DocGenResult } from "../pipeline/pipeline.orchestrator"
+import { beginRun, RUN_STEPS } from "../pipeline/pipeline.progress"
+import { scopedLogger } from "../utils/logger.utils"
+
+const log = scopedLogger("import");
 
 const APP_ID = env.GITHUB_APP_ID
 const PRIVATE_KEY = env.GITHUB_APP_PRIVATE_KEY.replace(/\\n/g, "\n");
@@ -31,6 +35,31 @@ export const getInstallationOctokit = async (installationId: number) => {
     }
   })
 };
+
+// App-level (rather than installation-level) client, for the handful of endpoints
+// that act on an installation itself instead of the repos inside it.
+const getAppOctokit = async () => {
+  const [{ Octokit }, { createAppAuth }] = await Promise.all([
+    import("@octokit/rest"),
+    import("@octokit/auth-app"),
+  ]);
+
+  return new Octokit({
+    authStrategy: createAppAuth,
+    auth: {
+      appId: APP_ID,
+      privateKey: PRIVATE_KEY,
+    }
+  })
+};
+
+// Removes the AutoDocs GitHub App from the user's account, which also stops GitHub
+// from sending us push webhooks for repos we no longer have any record of. Only the
+// installation is removed - the repositories and their code are untouched.
+export const uninstallApp = async (installationId: number) => {
+  const octokit = await getAppOctokit();
+  await octokit.rest.apps.deleteInstallation({ installation_id: installationId });
+}
 
 // create a installation access token, which we will use to clone repo, send PRs
 export const getInstallationToken = async (installationId: number): Promise<string> => {
@@ -96,12 +125,16 @@ export const getAllReposForUser = async (userId: string) => {
 }
 
 export const importThisRepo = async (userId: string, githubRepoId: string, name: string, cloneUrl: string, installation_id: number) => {
+
+  log.info({ repo: githubRepoId, userId, repoFullName: name }, `first-time import requested: ${name}`);
+
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { githubInstallationId: true },
   });
 
   if (!user?.githubInstallationId) {
+    log.warn({ repo: githubRepoId, userId }, "import rejected — GitHub App is not installed for this user");
     throw new HttpError(400, "GitHub App is not installed for this user yet");
   }
 
@@ -122,6 +155,8 @@ export const importThisRepo = async (userId: string, githubRepoId: string, name:
     },
   });
 
+  log.info({ repo: githubRepoId, id: importedRepo.id }, "Repo row upserted");
+
   const publisherData: FirstTimeImportJobData = {
     repoId: githubRepoId,
     userId,
@@ -131,7 +166,14 @@ export const importThisRepo = async (userId: string, githubRepoId: string, name:
     cloneUrl: await getAuthenticatedRepoUrl(cloneUrl, user.githubInstallationId),
     //      customPrompt // TODO
   }
-  await publishFirstTimeImport(publisherData)
+  const job = await publishFirstTimeImport(publisherData)
+
+  log.info({ repo: githubRepoId, job: job.id }, `queued on repo-storage-queue as job ${job.id}`);
+
+  // Creates the RepoDocState row up front, so the frontend has something to
+  // poll from the instant the import is accepted rather than only once the
+  // whole pipeline finishes.
+  await beginRun(githubRepoId, "FIRST_IMPORT", job.id ?? null, "QUEUED");
 
   return importedRepo;
 }
@@ -158,6 +200,95 @@ export const getImportedRepos = async (userId: string) => {
 }
 
 // ============================================================================
+// Run status — what the frontend polls while a documentation run is in flight.
+//
+// Reads the live progress columns pipeline.progress writes at every step, so
+// this reflects the stage the pipeline is on RIGHT NOW, not just the finished
+// artifacts. Returns a row even for a repo that has never been documented.
+// ============================================================================
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// The frontend routes on Repo.id (a uuid) while the pipeline keys everything on
+// github_repo_id (a numeric string). Accept either rather than making the
+// caller know which one it is holding.
+export const repoIdentity = (repoIdOrGithubId: string) =>
+  UUID_RE.test(repoIdOrGithubId)
+    ? { id: repoIdOrGithubId }
+    : { github_repo_id: repoIdOrGithubId };
+
+const findUserRepo = async (userId: string, repoIdOrGithubId: string) => {
+  return prisma.repo.findFirst({
+    where: { ...repoIdentity(repoIdOrGithubId), user_id: userId },
+    include: { doc_state: true },
+  });
+};
+
+// Maps the run state onto the small vocabulary the StatusPill component knows.
+const toPillState = (
+  runStatus: string,
+  trigger: string | null,
+  hasDocs: boolean,
+): string => {
+
+  switch (runStatus) {
+    case "QUEUED": return "queued";
+    case "RUNNING": return trigger === "WEBHOOK_PUSH" && hasDocs ? "updating" : "processing";
+    case "COMPLETED": return "complete";
+    case "FAILED": return "failed";
+    case "SKIPPED": return hasDocs ? "complete" : "pending";
+    default: return hasDocs ? "complete" : "pending";
+  }
+};
+
+export const getRepoStatus = async (userId: string, repoIdOrGithubId: string) => {
+
+  const repo = await findUserRepo(userId, repoIdOrGithubId);
+
+  if (!repo) {
+    throw new HttpError(404, "Repo not found");
+  }
+
+  const state = repo.doc_state;
+  const runStatus = state?.run_status ?? "IDLE";
+  const hasDocs = Boolean(repo.last_processed_commit);
+
+  return {
+    repoId: repo.id,
+    githubRepoId: repo.github_repo_id,
+    name: repo.full_name,
+
+    // Run lifecycle
+    runStatus,
+    state: toPillState(runStatus, state?.run_trigger ?? null, hasDocs),
+    active: runStatus === "QUEUED" || runStatus === "RUNNING",
+    completed: runStatus === "COMPLETED" || (runStatus === "IDLE" && hasDocs),
+    trigger: state?.run_trigger ?? null,
+
+    // Where in the pipeline it is
+    steps: RUN_STEPS,
+    stage: state?.stage_label ?? null,      // coarse step name, matches `steps`
+    stageKey: state?.stage ?? null,         // granular machine stage
+    stageIndex: state?.stage_index ?? null,
+    message: state?.stage_detail ?? null,
+    progress: state?.progress_total
+      ? { done: state.progress_done ?? 0, total: state.progress_total }
+      : null,
+
+    // Outcome
+    prUrl: state?.pr_url ?? null,
+    error: state?.last_error ?? null,
+    routeKind: state?.route_kind ?? null,
+    ownerReport: state?.owner_report ?? null,
+    lastProcessedCommit: repo.last_processed_commit,
+
+    startedAt: state?.run_started_at ?? null,
+    finishedAt: state?.run_finished_at ?? null,
+    updatedAt: state?.updated_at ?? null,
+  };
+}
+
+// ============================================================================
 // Custom doc instructions — free text the owner adds on top of our prompts.
 // ============================================================================
 
@@ -168,9 +299,9 @@ export interface RepoPromptsInput {
 
 // Both lookups scope by user_id: that is what stops one user from reading or
 // writing the instructions attached to somebody else's repo.
-export const getRepoPrompts = async (userId: string, githubRepoId: string) => {
+export const getRepoPrompts = async (userId: string, repoIdOrGithubId: string) => {
   const repo = await prisma.repo.findFirst({
-    where: { github_repo_id: githubRepoId, user_id: userId },
+    where: { ...repoIdentity(repoIdOrGithubId), user_id: userId },
     select: { arch_prompt: true, module_prompt: true, prompts_updated_at: true },
   });
 
@@ -187,11 +318,11 @@ export const getRepoPrompts = async (userId: string, githubRepoId: string) => {
 
 export const setRepoPrompts = async (
   userId: string,
-  githubRepoId: string,
+  repoIdOrGithubId: string,
   input: RepoPromptsInput,
 ) => {
   const repo = await prisma.repo.findFirst({
-    where: { github_repo_id: githubRepoId, user_id: userId },
+    where: { ...repoIdentity(repoIdOrGithubId), user_id: userId },
     select: { id: true },
   });
 

@@ -4,25 +4,31 @@ import type { StorageJobData } from "../queue/types.queue"
 import { CleanupJobData, DeepClonePushJobData, FirstTimeImportJobData } from "../queue/types.queue"
 import { constructPath } from "../utils/pathHelper.utils"
 import { checkIfRepoExists } from "../github/github.service";
-import { rm } from "fs/promises"
-import prisma from "../prisma/prisma";
+import { mkdir, rm } from "fs/promises"
+import path from "path"
 import simpleGit, { SimpleGit } from "simple-git"
 import { checkForSpace } from "./codebase.service";
 import { DocGenResult, generateFirstTimeDocs } from "../pipeline/pipeline.orchestrator"
+import { markStage, finishRun } from "../pipeline/pipeline.progress";
 import { raisePR } from "../github/github.app.service";
 import { recordDocRun, buildRunMessage, resolveRunStatus } from "../notification/notification.service";
+import { scopedLogger } from "../utils/logger.utils";
 
 const TOTAL_SIZE = 5 * 1024 * 1024 * 1024; // 5gb max for storing local repo copies
 
 export const storageWorker = new Worker<StorageJobData>(
     'repo-storage-queue',
     async (job: Job<StorageJobData>) => {
-        console.log(`[StorageWorker] Processing job '${job.name}' (ID: ${job.id})`);
+
+        const log = scopedLogger("storage", { job: job.id });
+
+        log.info({ jobName: job.name, attempt: job.attemptsMade + 1 }, `picked up job '${job.name}'`);
 
         if (job.name === "clone-first-time") {
             const data = job.data as FirstTimeImportJobData;
             const repoPath = constructPath(data.repoId);
-            const git: SimpleGit = simpleGit(repoPath);
+
+            const runLog = scopedLogger("storage", { job: job.id, repo: data.repoId });
 
             // Everything the notification row needs, tracked as we go so the
             // `finally` block can describe a partial run as accurately as a
@@ -34,12 +40,20 @@ export const storageWorker = new Worker<StorageJobData>(
             let prUrl: string | null = null;
             let failure: unknown = null;
 
+            runLog.info(
+                { repoFullName: data.repoFullName, defaultBranch: data.defaultBranch, repoPath },
+                `first-time import start: ${data.repoFullName}`,
+            );
+
             try {
                 stageReached = "await-space";
                 let waitedForSpace = false;
 
                 while(! await checkForSpace(data.cloneUrl, TOTAL_SIZE, data.installationId)){
-                    console.log("All repos are occupied, waiting 1 minute...");
+                    if (!waitedForSpace) {
+                        await markStage(data.repoId, "AWAITING_SPACE");
+                    }
+                    runLog.warn("local disk is full — waiting 1 minute before retrying");
                     waitedForSpace = true;
                     await sleep(60 * 1000); // Pauses the loop execution properly for 1 minute
                 }
@@ -52,10 +66,27 @@ export const storageWorker = new Worker<StorageJobData>(
                 // (was "-branch=main": invalid flag — single dash — and pinning
                 // "main" breaks repos whose default branch is "master".)
                 stageReached = "clone";
+                await markStage(data.repoId, "CLONING", {
+                    detail: `Cloning ${data.repoFullName}`,
+                });
+
+                const cloneStartedAt = Date.now();
+
+                // simple-git needs an existing cwd, and `git clone` refuses a
+                // non-empty destination — so run from the parent and clear any
+                // half-written tree left by a previous attempt.
+                const clonesRoot = path.dirname(repoPath);
+                await mkdir(clonesRoot, { recursive: true });
+                await rm(repoPath, { recursive: true, force: true });
+
+                const git: SimpleGit = simpleGit(clonesRoot);
+
                 await git.clone(data.cloneUrl, repoPath, [
                     "--depth=1",
                     "--single-branch",
                 ]);
+
+                runLog.info({ ms: Date.now() - cloneStartedAt }, "clone complete");
 
                 stageReached = "generate-docs";
                 result = await generateFirstTimeDocs(data.repoId, repoPath);
@@ -66,25 +97,44 @@ export const storageWorker = new Worker<StorageJobData>(
                     warnings.push("no module docs were produced");
                 }
 
-                console.log(
-                    `[StorageWorker] docs generated for ${data.repoId}: ` +
-                    `route=${result.route}, moduleDocs=${result.moduleDocCount}, ` +
-                    `archDoc=1, ownerReport=${result.ownerReport ? "yes" : "none"}`,
+                runLog.info(
+                    {
+                        route: result.route,
+                        moduleDocs: result.moduleDocCount,
+                        ownerReport: Boolean(result.ownerReport),
+                        stats: result.stats,
+                    },
+                    `docs generated: route=${result.route}, ${result.moduleDocCount} module docs + 1 architecture doc`,
                 );
 
                 stageReached = "raise-pr";
+                await markStage(data.repoId, "RAISING_PR");
+
                 prUrl = await raisePR(data.repoId, data.defaultBranch, "autodocs/update", result);
 
                 stageReached = "done";
-                console.log(`PR raised: ${prUrl}`);
+                runLog.info({ prUrl }, `pull request ready: ${prUrl}`);
 
                 return result;
             }
             catch (err) {
                 failure = err;
+                runLog.error({ err, stageReached }, `first-time import failed at '${stageReached}'`);
                 throw err;                  // BullMQ still gets to retry this job
             }
             finally {
+                // Terminal progress state BEFORE the notification write, so the
+                // frontend stops showing a spinner even if that write fails.
+                await finishRun(data.repoId, {
+                    status: failure ? "FAILED" : "COMPLETED",
+                    detail: buildRunMessage(result, prUrl, warnings, failure),
+                    prUrl,
+                    error: failure
+                        ? (failure instanceof Error ? failure.message : String(failure))
+                        : null,
+                    durationMs: Date.now() - startedAt,
+                });
+
                 // One row per attempt, success or not. attemptsMade is in the log
                 // so retries read as a history rather than duplicates.
                 await recordDocRun({
@@ -120,9 +170,9 @@ export const storageWorker = new Worker<StorageJobData>(
             // (docs.worker.ts) — they own clone restore via evaluatePush, so a
             // blind re-clone here would clobber the pinned docs pointer.
             const data = job.data as DeepClonePushJobData;
-            console.warn(
-                `[StorageWorker] 'clone-deep-push' is deprecated (repo ${data.repoId}); ` +
-                `push handling now lives on push-classify-queue`,
+            log.warn(
+                { repo: data.repoId },
+                "'clone-deep-push' is deprecated; push handling now lives on push-classify-queue",
             );
         }
         else if (job.name === "cleanup-repo") {
@@ -135,29 +185,23 @@ export const storageWorker = new Worker<StorageJobData>(
                     recursive: true,
                     force: true,
                 });
+
+                log.info({ repo: data.repoId, path: data.path }, "local clone deleted");
             }
             else if (data.action === "DELETE_USER") {
-                const repos = await prisma.repo.findMany({
-                    where: {
-                        user_id: data.userId
-                    },
-                    select: {
-                        github_repo_id: true
-                    }
-                });
-
-                repos.forEach(async (repoId) => {
-                    const path = constructPath(repoId.github_repo_id);
-
-                    if (await checkIfRepoExists(path)) {
-                        await rm(path, {
+                // The Repo rows are already gone by the time this runs, so the ids
+                // come from the job payload rather than a lookup.
+                for (const repoId of data.repoIds) {
+                    if (await checkIfRepoExists(repoId)) {
+                        await rm(constructPath(repoId), {
                             recursive: true,
                             force: true,
                         });
                     }
-                })
+                }
 
-                console.log(`${data.userId}'s all local repos are deleted`);
+                log.info({ userId: data.userId, repos: data.repoIds.length },
+                    `deleted all local clones for user ${data.userId}`);
             }
 
         }
@@ -173,8 +217,15 @@ export const storageWorker = new Worker<StorageJobData>(
     }
 )
 
-storageWorker.on('failed', (job, err) => {
-    console.error(`[StorageWorker] Job ${job?.id} (${job?.name}) failed:`, err);
+const workerLog = scopedLogger("storage");
+
+storageWorker.on("failed", (job, err) => {
+    workerLog.error({ job: job?.id, jobName: job?.name, attempt: job?.attemptsMade, err },
+        `job ${job?.id} (${job?.name}) failed`);
+});
+
+storageWorker.on("completed", (job) => {
+    workerLog.info({ job: job.id, jobName: job.name }, `job ${job.id} (${job.name}) completed`);
 });
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

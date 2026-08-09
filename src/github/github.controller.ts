@@ -8,32 +8,40 @@ import crypto from "crypto";
 import { z } from "zod";
 import { env } from "../config/env"
 import { HttpError } from "../utils/httpError.utils"
+import { scopedLogger } from "../utils/logger.utils"
 
 const WEBHOOK_SECRET = env.GITHUB_WEBHOOK_SECRET;
 
+const log = scopedLogger("github-api");
+
 export const githubHandler = async (req: Request, res: Response) => {
-    console.log("Request recieved !!", req.body);
+    const event = req.headers["x-github-event"];
+
+    log.info({ event, delivery: req.headers["x-github-delivery"] }, `webhook received: ${event}`);
 
     const signatureHeader = req.headers['x-hub-signature-256'] as string | undefined;
 
     // 2. Extract the raw body buffer attached by the middleware
     const rawBody = (req as any).rawBody as Buffer;
-    if (!signatureHeader || !rawBody)
+    if (!signatureHeader || !rawBody) {
+        log.warn("webhook rejected — missing signature header or raw body");
         return res.status(401).send("Invalid signature");
-    
+    }
+
     // 3. Verify the signature
     const isValid = verifyGitHubSignature(rawBody, signatureHeader, WEBHOOK_SECRET);
 
     if (!isValid) {
-        console.warn('[Security] Webhook signature verification failed!');
+        log.warn("webhook rejected — signature verification failed");
         return res.status(401).send('Invalid signature');
     }
 
-    const event = req.headers["x-github-event"];
     const payload = req.body;
 
-    if (event !== "push") // dont bother about anything other than push event
+    if (event !== "push") { // dont bother about anything other than push event
+        log.info({ event }, `ignored — only push events are handled`);
         return res.status(200)
+    }
 
     await githubService.githubWebhookHandlerService(payload);
     res.status(200).json({ success: true, message: "It works " });
@@ -59,7 +67,7 @@ export const handleSetupCallback = async (req: Request, res: Response) => {
         const { userId } = verifyAccessToken(state);
         await githubAppService.saveInstallationId(userId, installationId);
     } catch (err) {
-        console.error("GitHub App setup callback failed:", err);
+        log.error({ err, installationId }, "GitHub App setup callback failed");
         return res.redirect(`${env.CLIENT_URL}/dashboard?github_error=invalid_state`);
     }
 
@@ -99,11 +107,22 @@ export const getImportedRepos = async (req: Request, res: Response) => {
     res.status(200).json({ success: true, repos });
 }
 
+// Polled by the frontend while a run is in flight. :repoId accepts either the
+// Repo uuid the dashboard routes on or the github_repo_id the pipeline uses.
+export const getRepoStatus = async (req: Request, res: Response) => {
+    const repoId = req.params.repoId as string;
+    const userId = (req as any).user.id;
+
+    const status = await githubAppService.getRepoStatus(userId, repoId);
+    res.status(200).json({ success: true, status });
+}
+
 export const deleteRepo = async (req: Request, res: Response) => {
     const repoId = req.params.repoId as string;
     const userId = (req as any).user.id;
 
     await githubService.deleteRepo(userId, repoId);
+    res.status(200).json({ success: true });
 }
 
 // Custom doc instructions. Both routes take the github_repo_id as :repoId, the

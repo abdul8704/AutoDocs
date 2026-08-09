@@ -2,8 +2,11 @@ import fs from "fs";
 import path from "path";
 import axios from "axios";
 import { readdir, stat } from "fs/promises";
+import { getInstallationToken } from "../github/github.app.service";
 
-const CODEBASES_DIR = path.join(__dirname, "codebases");
+// Must match constructPath() — the workers clone into <cwd>/codebases, so
+// eviction and size accounting have to look at that same tree.
+const CODEBASES_DIR = path.join(process.cwd(), "codebases");
 
 interface LockInfo {
     pid: number;
@@ -149,7 +152,7 @@ export function getEvictableLRURepo(): string | null {
 export const checkForSpace = async (
     cloneUrl: string,
     TOTAL_SIZE: number,
-    installationToken: number,
+    installationId: number,
 ): Promise<boolean> => {
     const sanitizedUrl = cloneUrl
         .trim()
@@ -167,7 +170,10 @@ export const checkForSpace = async (
 
     const [, owner, repo] = match;
 
-    // 2. Query GitHub API for repository size
+    // 2. Query GitHub API for repository size. Installation tokens are
+    // short-lived, so mint one per call rather than passing one around.
+    const installationToken = await getInstallationToken(installationId);
+
     const repoData = await axios.get(
         `https://api.github.com/repos/${owner}/${repo}`,
         {

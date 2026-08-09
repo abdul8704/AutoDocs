@@ -9,9 +9,11 @@ import { getAuthenticatedRepoUrl, raisePR } from "../github/github.app.service";
 
 import { evaluatePush, applyDocUpdate, PushEvaluation } from "../pipeline/pipeline.webhook";
 import { DocGenResult } from "../pipeline/pipeline.orchestrator";
+import { beginRun, markStage, finishRun } from "../pipeline/pipeline.progress";
 import {
     recordPushEvaluation, recordDocRun, buildRunMessage, resolveRunStatus,
 } from "../notification/notification.service";
+import { scopedLogger, truncate } from "../utils/logger.utils";
 
 const DOCS_BRANCH = "autodocs/update";
 
@@ -43,6 +45,13 @@ export const classifyWorker = new Worker<PushClassifyJobData>(
         const repoPath = constructPath(data.repoId);
         const startedAt = Date.now();
 
+        const log = scopedLogger("classify", { job: job.id, repo: data.repoId });
+
+        log.info(
+            { repoFullName: data.repoFullName, beforeSha: data.beforeSha, afterSha: data.afterSha },
+            `debounce elapsed — evaluating push on ${data.repoFullName}`,
+        );
+
         let evaluation: PushEvaluation | null = null;
         let failure: unknown = null;
 
@@ -62,9 +71,9 @@ export const classifyWorker = new Worker<PushClassifyJobData>(
 
             evaluation = await evaluatePush(data.repoId, repoPath, authedUrl, data.defaultBranch);
 
-            console.log(
-                `[ClassifyWorker] ${data.repoFullName}: ${evaluation.action}` +
-                ` (${evalDetail(evaluation).slice(0, 140)})`,
+            log.info(
+                { action: evaluation.action, afterSha: evaluation.afterSha },
+                `${data.repoFullName}: ${evaluation.action} — ${truncate(evalDetail(evaluation))}`,
             );
 
             if (evaluation.action === "NEEDS_UPDATE") {
@@ -79,15 +88,40 @@ export const classifyWorker = new Worker<PushClassifyJobData>(
                     installationId: data.installationId,
                     defaultBranch: data.defaultBranch,
                 });
+
+                log.info({ afterSha: evaluation.afterSha }, "handed off to doc-generation-queue");
+
+                await markStage(data.repoId, "PUSH_ACCEPTED", {
+                    detail: `Documentation update queued — ${truncate(evaluation.reason, 120)}`,
+                });
             }
 
             return evaluation;
         }
         catch (err) {
             failure = err;
+            log.error({ err }, "push evaluation failed");
             throw err;                       // BullMQ retries per queue policy
         }
         finally {
+            // A skip is terminal for this run: no docgen job follows, so the
+            // frontend needs to be told the pipeline stopped here and why.
+            if (failure) {
+                await finishRun(data.repoId, {
+                    status: "FAILED",
+                    detail: "Push evaluation failed",
+                    error: failure instanceof Error ? failure.message : String(failure),
+                    durationMs: Date.now() - startedAt,
+                });
+            }
+            else if (evaluation && evaluation.action !== "NEEDS_UPDATE") {
+                await finishRun(data.repoId, {
+                    status: "SKIPPED",
+                    detail: evalDetail(evaluation),
+                    durationMs: Date.now() - startedAt,
+                });
+            }
+
             await recordPushEvaluation({
                 repoId: data.repoId,
                 action: failure ? "ERROR" : evaluation!.action,
@@ -125,11 +159,26 @@ export const docGenWorker = new Worker<DocUpdateJobData>(
         const repoPath = constructPath(data.repoId);
         const startedAt = Date.now();
 
+        const log = scopedLogger("docgen", { job: job.id, repo: data.repoId });
+
+        log.info(
+            {
+                repoFullName: data.repoFullName,
+                afterSha: data.afterSha,
+                changedPaths: data.affectedDocs.length,
+            },
+            `doc update start: ${data.repoFullName} (${data.affectedDocs.length} changed paths)`,
+        );
+
         const warnings: string[] = [];
         let result: DocGenResult | null = null;
         let prUrl: string | null = null;
         let failure: unknown = null;
         let stageReached = "start";
+
+        // A fresh run: this clears the classify phase's PR/error so the frontend
+        // shows THIS regeneration rather than whatever happened last time.
+        await beginRun(data.repoId, "WEBHOOK_PUSH", job.id ?? null, "CHECKOUT");
 
         try {
             stageReached = "apply-update";
@@ -137,19 +186,38 @@ export const docGenWorker = new Worker<DocUpdateJobData>(
             result = outcome.result;
             warnings.push(...result.warnings);
 
+            log.info(
+                { route: result.route, moduleDocs: result.moduleDocCount, stats: result.stats },
+                `docs regenerated: ${result.stats.modulesRegenerated} module(s) rebuilt, ` +
+                `${result.stats.modulesFromCache} reused from cache`,
+            );
+
             stageReached = "raise-pr";
+            await markStage(data.repoId, "RAISING_PR");
+
             prUrl = await raisePR(data.repoId, data.defaultBranch, DOCS_BRANCH, result);
 
             stageReached = "done";
-            console.log(`[DocGenWorker] ${data.repoFullName}: PR ${prUrl}`);
+            log.info({ prUrl, newSha: outcome.newSha }, `pull request ready: ${prUrl}`);
 
             return { prUrl, newSha: outcome.newSha };
         }
         catch (err) {
             failure = err;
+            log.error({ err, stageReached }, `doc update failed at '${stageReached}'`);
             throw err;
         }
         finally {
+            await finishRun(data.repoId, {
+                status: failure ? "FAILED" : "COMPLETED",
+                detail: buildRunMessage(result, prUrl, warnings, failure),
+                prUrl,
+                error: failure
+                    ? (failure instanceof Error ? failure.message : String(failure))
+                    : null,
+                durationMs: Date.now() - startedAt,
+            });
+
             await recordDocRun({
                 repoId: data.repoId,
                 status: resolveRunStatus(prUrl, warnings, failure),
@@ -178,3 +246,16 @@ export const docGenWorker = new Worker<DocUpdateJobData>(
     },
     { connection: redisConnection, concurrency: 3 },
 );
+
+// Queue-level outcomes. A job that fails all its attempts only shows up here,
+// so without these a retried-then-abandoned run leaves no final line.
+const classifyLog = scopedLogger("classify");
+const docGenLog = scopedLogger("docgen");
+
+classifyWorker.on("failed", (job, err) => {
+    classifyLog.error({ job: job?.id, attempt: job?.attemptsMade, err }, `classify job ${job?.id} failed`);
+});
+
+docGenWorker.on("failed", (job, err) => {
+    docGenLog.error({ job: job?.id, attempt: job?.attemptsMade, err }, `docgen job ${job?.id} failed`);
+});

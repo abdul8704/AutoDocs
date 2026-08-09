@@ -1,5 +1,8 @@
 import prisma from "../prisma/prisma";
 import type { DocGenResult } from "../pipeline/pipeline.orchestrator";
+import { scopedLogger, truncate } from "../utils/logger.utils";
+
+const log = scopedLogger("notify");
 
 // ============================================================================
 // Run notifications — one row per doc-generation attempt, ALWAYS written.
@@ -34,8 +37,11 @@ export const recordDocRun = async (input: DocRunNotification): Promise<void> => 
                 logs: JSON.parse(JSON.stringify(input.logs)),
             },
         });
+
+        log.info({ repo: input.repoId, status: input.status, prUrl: input.prUrl },
+            `DOC_RUN ${input.status}: ${truncate(input.message)}`);
     } catch (err) {
-        console.error(`[Notification] failed to record doc run for ${input.repoId}:`, err);
+        log.error({ repo: input.repoId, err }, "failed to record doc run");
     }
 }
 
@@ -129,7 +135,10 @@ export const recordPushEvaluation = async (input: PushEvalNotification): Promise
                 logs: JSON.parse(JSON.stringify(input.logs)),
             },
         });
+
+        log.info({ repo: input.repoId, action: input.action },
+            `PUSH_EVAL ${input.action}: ${truncate(input.detail)}`);
     } catch (err) {
-        console.error(`[Notification] failed to record push evaluation for ${input.repoId}:`, err);
+        log.error({ repo: input.repoId, err }, "failed to record push evaluation");
     }
 }

@@ -132,6 +132,24 @@ model RepoDocState {
   // every regeneration; at MAX_JUDGE_SKIPS the next push regenerates unjudged.
   judge_skip_count Int @default(0)
 
+  // ---- Live run progress --------------------------------------------------
+  // Written at EVERY step of the pipeline (see pipeline.progress.ts), not just
+  // at the end, so the frontend can poll this row and watch a run advance.
+  // The row is created when the job is queued, long before any doc exists.
+  run_status      String    @default("IDLE") // IDLE | QUEUED | RUNNING | COMPLETED | FAILED | SKIPPED
+  run_trigger     String? // FIRST_IMPORT | WEBHOOK_PUSH
+  run_job_id      String?
+  stage           String? // machine stage id, e.g. "MODULE_DOCS"
+  stage_label     String? // coarse step name shown in the UI stepper
+  stage_index     Int? // position of stage_label in that stepper
+  stage_detail    String? // one human sentence about what is happening now
+  progress_done   Int? // e.g. module docs finished so far
+  progress_total  Int?
+  run_started_at  DateTime?
+  run_finished_at DateTime?
+  last_error      String?
+  pr_url          String?
+
   updated_at      DateTime @updatedAt
 
   // repo_id here is the github_repo_id (same convention as ModuleDoc/Notification).

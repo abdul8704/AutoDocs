@@ -7,7 +7,10 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "smoke:progress": "tsx src/scripts/progress.smoke.ts",
+    "smoke:status": "tsx src/scripts/status.smoke.ts",
+    "db:inspect": "tsx src/scripts/db.inspect.ts"
   },
   "keywords": [],
   "author": "",
@@ -46,6 +49,7 @@
     "json-web-token": "^4.0.1",
     "jsonwebtoken": "^9.0.3",
     "node-appwrite": "^27.1.0",
+    "openai": "^7.4.0",
     "pg": "^8.22.0",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
