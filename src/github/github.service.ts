@@ -15,7 +15,6 @@ let git: SimpleGit = simpleGit();
 // clone the repo into our base
 export const cloneNewRepo = async (data: FirstTimeImportJobData, repoPath: string) => {
     // creates path like codebases/<repo_id>/
-    console.log("doinggggg", repoPath, data.githubUrl)
     const cloneUrl = data.githubUrl
     const rootPath = path.dirname(repoPath);
     console.log(`[StorageWorker] Cloning ${data.repoId} into ${repoPath}`);

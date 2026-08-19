@@ -11,6 +11,7 @@ import { authenticate } from "./auth/auth.middleware"
 import githubRouter from "./github/webhook.routes"
 import githubAppRouter from "./github/github.app.routes"
 import authRouter from "./auth/auth.routes"
+import llmConfigRouter from "./LLM/config/llm.config.router"
 import "./worker/storage.worker"
 
 const app = express();
@@ -30,6 +31,7 @@ app.use(cookieParser());
 // /health is a public uptime check.
 app.use("/auth", authRouter);
 app.use("/api/github", githubAppRouter);
+app.use("/api/llm-config", llmConfigRouter);
 
 app.get("/health", ( _req, res) => {
     res.send("yarupa nee")

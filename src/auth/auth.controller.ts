@@ -35,7 +35,7 @@ export const githubLogin = async (_req: Request, res: Response) => {
     // in a short-lived cookie and check it matches what GitHub sends back on callback.
     const state = randomUUID();
     res.cookie(STATE_COOKIE_NAME, state, stateCookieOptions());
-console.log("hi")
+
     const url = githubProvider.getGithubAuthUrl(state);
     res.redirect(url);
 }
@@ -66,7 +66,7 @@ export const githubCallback = async (req: Request, res: Response) => {
         const { refreshToken, expiresAt } = await authService.setUpJwt(user.id);
         res.cookie(REFRESH_COOKIE_NAME, refreshToken, refreshCookieOptions(expiresAt));
 
-console.log(res.getHeader("Set-Cookie"));
+        console.log(res.getHeader("Set-Cookie"));
         // The access token is deliberately NOT sent here. The frontend lands on
         // /dashboard and silently calls POST /auth/refresh (using the httpOnly
         // cookie we just set) to obtain it, keeping it out of the URL entirely.

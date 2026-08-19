@@ -62,3 +62,23 @@ model Repo {
 
   user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
 }
+
+model LLMTaskConfig {
+  id                String   @id @default(uuid())
+  taskKey           String   @unique // e.g., 'tinyRepo', 'judge'
+  provider          String   // e.g., 'gemini', 'anthropic'
+  model             String   // e.g., 'gemini-2.5-pro', 'claude-3-5-sonnet'
+  temperature       Float    @default(0.2)
+  systemInstruction String?
+  updatedAt         DateTime @updatedAt
+}
+
+model Prompt {
+  id            String   @id @default(uuid())
+  prompt_key    String   @unique // e.g., 'tinyRepo', 'judge'
+  version       String
+  content       String
+  is_current     Boolean   @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

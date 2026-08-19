@@ -93,7 +93,8 @@ export const fetchGithubProfile = async (token: string): Promise<OAuthProfile> =
     const name: string = response.data.name ?? response.data.login;
     let email: string | null = response.data.email;
 
-    if (!email) {
+    // if user had set their email to private, we need to explicitly make a request to get their email
+    if (!email) { 
         email = await fetchGithubPrimaryEmail(token);
     }
 
