@@ -72,7 +72,7 @@ export const getInstallationStatus = async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
 
     const status = await githubAppService.getInstallationStatus(userId);
-    res.status(200).json({ success: true, ...status });
+    res.status(200).json({ success: true, ...status, appSlug: env.GITHUB_APP_SLUG });
 }
 
 export const getAllAccessibleRepos = async (req: Request, res: Response) => {

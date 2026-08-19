@@ -63,8 +63,14 @@ export const docGenQueue = new Queue<DocUpdateJobData>(
  * Target: repoStorageQueue ('clone-first-time')
  */
 export const publishFirstTimeImport = async (data: FirstTimeImportJobData) => {
+  console.log("published ", data);
+  const jobId = `clone-first-${data.repoId}`;
+  const existingJob = await repoStorageQueue.getJob(jobId);
+  if (existingJob) {
+    await existingJob.remove();
+  }
   return await repoStorageQueue.add("clone-first-time", data, {
-    jobId: `clone-first-${data.repoId}`, // Idempotent per repository
+    jobId,
   });
 };
 

@@ -1,5 +1,5 @@
-import simpleGit from "simple-git"
-import fs from "fs/promises";
+import simpleGit, { SimpleGit } from "simple-git"
+import fs, { mkdir } from "fs/promises";
 import { createPath } from "../utils/pathHelper.utils";
 import { constructPath } from "../utils/pathHelper.utils"
 import { CodebaseChangeEvent, GitFetchResponse } from "../types/repo.types";
@@ -7,36 +7,47 @@ import prisma from "../prisma/prisma";
 import * as githubAppService from "./github.app.service"
 
 import { publishCleanup, publishDeepCloneForPush } from "../queue/publishers"
-import { CleanupJobData, DeepClonePushJobData } from "../queue/types.queue";
+import { CleanupJobData, DeepClonePushJobData, FirstTimeImportJobData } from "../queue/types.queue";
+import path from "path";
 
-const git = simpleGit();
+let git: SimpleGit = simpleGit();
 
 // clone the repo into our base
-export const cloneNewRepo = async (event: CodebaseChangeEvent, userId: string) => {
+export const cloneNewRepo = async (data: FirstTimeImportJobData, repoPath: string) => {
     // creates path like codebases/<repo_id>/
-    // const path = constructPath(event.repo.id);
-    // const cloneUrl = await githubAppService.getAuthenticatedRepoUrl(event.repo.clone_url, event.installation.id);
-    // await git.clone(cloneUrl, path);
+    console.log("doinggggg", repoPath, data.githubUrl)
+    const cloneUrl = data.githubUrl
+    const rootPath = path.dirname(repoPath);
+    console.log(`[StorageWorker] Cloning ${data.repoId} into ${repoPath}`);
+    console.log(`Cloning start: ${Date.now()}`);
 
-    const repoData: DeepClonePushJobData = {
-        repoId: event.repo.id,
-        defaultBranch: event.ref,
-        repoFullName: event.repo.full_name,
-        installationId: event.installation.id,
-        beforeSha: event.before,
-        afterSha: event.after,
-        userId
-    };
+    await mkdir(rootPath, { recursive: true });
+    git = simpleGit(rootPath);
 
-    await publishDeepCloneForPush(repoData);
+    await git.clone(cloneUrl, repoPath, [
+        "--depth=1",
+        "--single-branch",
+    ]);
+
+    console.log(`✅ Successfully cloned: ${repoPath}`);
+    console.log(`Cloning end: ${Date.now()}`);
 }
 
 // check if the repo already exists in our local base
-export const checkIfRepoExists = async (repoId: string): Promise<boolean> => {
-    const path = createPath("codebases", repoId);
+export const checkIfRepoExists = async (pathOrRepoId: string): Promise<boolean> => {
+    try {
+        const targetPath = path.isAbsolute(pathOrRepoId)
+            ? pathOrRepoId
+            : createPath("codebases", pathOrRepoId);
 
-    const stats = await fs.stat(path);
-    return stats.isDirectory();
+        const stats = await fs.stat(targetPath);
+        return stats.isDirectory();
+    } catch (err: any) {
+        if (err.code === "ENOENT") {
+            return false;
+        }
+        throw err;
+    }
 }
 
 export const fetchAndClassify = async (event: CodebaseChangeEvent, repoName: string) => {

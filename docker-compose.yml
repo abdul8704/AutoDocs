@@ -1,23 +1,95 @@
-version: "3.9"
-
 services:
   app:
+    container_name: node-app
+
     build:
       context: .
-      dockerfile: docker/node/Dockerfile
+      dockerfile: Dockerfile
 
-    container_name: github-automation
+    restart: unless-stopped
 
     ports:
-      - "5000:5000"
+      - "${PORT:-5000}:5000"
 
     env_file:
       - .env
+
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    
+    command: sh -c "npx prisma migrate deploy && npm run dev"
+    
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
     volumes:
       - .:/app
       - /app/node_modules
 
-    command: npm run dev
+    networks:
+      - backend
+
+  postgres:
+    container_name: postgres
+
+    image: postgres:17-alpine
 
     restart: unless-stopped
+
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+    networks:
+      - backend
+
+  redis:
+    container_name: redis
+
+    image: redis:8-alpine
+
+    restart: unless-stopped
+
+    command: redis-server --appendonly yes
+
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+    volumes:
+      - redis-data:/data
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+    networks:
+      - backend
+
+volumes:
+  postgres-data:
+  redis-data:
+
+networks:
+  backend:
+    driver: bridge

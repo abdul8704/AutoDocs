@@ -11,6 +11,7 @@ import { authenticate } from "./auth/auth.middleware"
 import githubRouter from "./github/webhook.routes"
 import githubAppRouter from "./github/github.app.routes"
 import authRouter from "./auth/auth.routes"
+import "./worker/storage.worker"
 
 const app = express();
 

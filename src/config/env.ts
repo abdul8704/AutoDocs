@@ -18,9 +18,6 @@ const envSchema = z.object({
     GITHUB_APP_SLUG: z.string(),
 
     DATABASE_URL: z.string(),
-    GOOGLE_CLIENT_ID: z.string(),
-    GOOGLE_CLIENT_SECRET: z.string(),
-    GOOGLE_CALLBACK_URL: z.string(),
     JWT_ACCESS_SECRET: z.string(),
     JWT_REFRESH_SECRET: z.string(),
     ACCESS_TOKEN_EXPIRY: z.string(),

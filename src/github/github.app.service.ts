@@ -125,6 +125,7 @@ export const importThisRepo = async (userId: string, githubRepoId: string, name:
       githubUrl: await getAuthenticatedRepoUrl(cloneUrl, user.githubInstallationId),
 //      customPrompt // TODO
     }
+    console.log("about to publish")
     await publishFirstTimeImport(publisherData)
 
     return importedRepo;

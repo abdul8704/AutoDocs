@@ -16,6 +16,7 @@ export interface DeepClonePushJobData {
   installationId: number;
   beforeSha: string;
   afterSha: string;
+  githubUrl: string;
   userId: string;
 }
 
@@ -24,6 +25,7 @@ export interface CleanupJobData {
   repoId: string;
   path?: string;
   userId: string;
+  repoFullName?: string;
   action: "DELETE_REPO" | "DELETE_USER";
 }
 
