@@ -23,7 +23,10 @@ const envSchema = z.object({
     ACCESS_TOKEN_EXPIRY: z.string(),
     REFRESH_TOKEN_EXPIRY: z.string(),
     SERVER_URL: z.url(),
-    CLIENT_URL: z.url()
+    CLIENT_URL: z.url(),
+
+    GEMINI_API_KEY: z.string(),
+    
 });
 
 export const env = envSchema.parse(process.env);

@@ -1,9 +1,10 @@
 import { z } from "zod";
 
 export interface LLMRuntimeConfig {
-    temperature?: number;
-    systemInstruction?: string;
-    model?: string;
+    model: string;
+    systemInstruction: string;
+    temperature: number;
+    maxOutputTokens?: number;
 }
 
 export interface LLM_ProviderInterface {
@@ -18,4 +19,7 @@ export interface LLM_ProviderInterface {
     ): Promise<T>;
 }
 
-export type SupportedProviders = 'gemini' | 'openai' | 'anthropic';
+export const SUPPORTED_PROVIDERS = ['gemini', 'openai', 'anthropic'] as const;
+
+export type SupportedProviders = typeof SUPPORTED_PROVIDERS[number];
+export type LLMTaskType = 'tinyRepo' | 'judge' | 'docsGenerator' | 'moduleSummary' | 'test';

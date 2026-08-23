@@ -14,6 +14,7 @@ import authRouter from "./auth/auth.routes"
 import llmConfigRouter from "./LLM/config/llm.config.router"
 import promptRouter from "./LLM/prompts/prompt.router";
 import modelRouter from "./LLM/models/models.router"
+import taskConfigRouter from "./LLM/config/llm.config.router"
 
 import "./worker/storage.worker"
 const app = express();
@@ -45,6 +46,7 @@ app.use("/api/github", githubAppRouter);
 app.use("/api/llm-config", llmConfigRouter);
 app.use("/api/prompts", promptRouter);
 app.use("/api/models", modelRouter);
+app.use("/api/task-config", taskConfigRouter);
 
 app.use(errorMiddleware);
 

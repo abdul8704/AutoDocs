@@ -3,13 +3,14 @@ import { z } from "zod";
 import { BaseLLMProvider } from "./base.provider";
 import { LLMRuntimeConfig } from "../llm.types";
 import { zodToGeminiSchema } from "../llm.helper";
+import { env } from "../../config/env"
 
 export class GeminiProvider extends BaseLLMProvider {
     private ai: GoogleGenAI;
 
     constructor() {
         super();
-        this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        this.ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
     }
 
     override async generateText(
