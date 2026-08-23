@@ -1,13 +1,13 @@
-import { LLM_ProviderInterface, LLMGenerateOptions } from "../llm.types";
+import { LLM_ProviderInterface, LLMRuntimeConfig } from "../llm.types";
 import { z } from "zod";
 
 export abstract class BaseLLMProvider implements LLM_ProviderInterface {
     // Leaving these abstract forces child classes to implement them
-    abstract generateText(prompt: string, options?: LLMGenerateOptions): Promise<string>;
-    abstract generateStructured<T> (prompt: string, schema: z.ZodSchema<T>, options?: LLMGenerateOptions): Promise<T>;
+    abstract generateText(prompt: string, options?: LLMRuntimeConfig): Promise<string>;
+    abstract generateStructured<T>(prompt: string, schema: z.ZodSchema<T>, options?: LLMRuntimeConfig): Promise<T>;
 
-    protected parseJsonResponse<T> (rawJson: string, schema: z.ZodSchema<T>): T {
-        try{
+    protected parseJsonResponse<T>(rawJson: string, schema: z.ZodSchema<T>): T {
+        try {
             const parsed = JSON.parse(rawJson);
             return schema.parse(parsed);
         } catch (error) {

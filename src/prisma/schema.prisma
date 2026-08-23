@@ -66,19 +66,33 @@ model Repo {
 model LLMTaskConfig {
   id                String   @id @default(uuid())
   taskKey           String   @unique // e.g., 'tinyRepo', 'judge'
-  provider          String   // e.g., 'gemini', 'anthropic'
-  model             String   // e.g., 'gemini-2.5-pro', 'claude-3-5-sonnet'
+  modelRosterId     String 
+  model             ModelRoster   @relation(fields: [modelRosterId], references: [id], onDelete: Restrict)
+
+  promptId          String
+  prompt            Prompt   @relation(fields: [promptId], references: [id], onDelete: Restrict)
   temperature       Float    @default(0.2)
-  systemInstruction String?
+  maxOutputTokens   Int?
   updatedAt         DateTime @updatedAt
 }
 
 model Prompt {
   id            String   @id @default(uuid())
-  prompt_key    String   @unique // e.g., 'tinyRepo', 'judge'
+  prompt_key    String  
   version       String
   content       String
-  is_current     Boolean   @default(true)
+  
+  taskConfigs  LLMTaskConfig[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model ModelRoster{
+  id String   @id @default(uuid())
+  modelName String
+  provider String 
+  taskConfigs  LLMTaskConfig[]
+  
+  @@unique([ modelName, provider ])
 }
