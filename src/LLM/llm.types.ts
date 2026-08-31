@@ -19,6 +19,14 @@ export interface LLM_ProviderInterface {
     ): Promise<T>;
 }
 
+export const docsAndPRSchema = z.object({
+    documentation: z.string(),
+    prTitle: z.string(),
+    prBody: z.string()
+})
+
+export type DocsAndPRSchema = z.infer<typeof docsAndPRSchema>
+
 export const SUPPORTED_PROVIDERS = ['gemini', 'openai', 'anthropic'] as const;
 
 export type SupportedProviders = typeof SUPPORTED_PROVIDERS[number];

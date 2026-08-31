@@ -6,6 +6,7 @@ import * as githubAppService from "./github.app.service"
 import { verifyAccessToken } from "../auth/jwt.service";
 import crypto from "crypto";
 import { env } from "../config/env"
+import { HttpError } from "../utils/httpError.utils";
 
 const WEBHOOK_SECRET = env.GITHUB_WEBHOOK_SECRET;
 
@@ -18,7 +19,7 @@ export const githubHandler = async (req: Request, res: Response) => {
     const rawBody = (req as any).rawBody as Buffer;
     if (!signatureHeader || !rawBody)
         return res.status(401).send("Invalid signature");
-    
+
     // 3. Verify the signature
     const isValid = verifyGitHubSignature(rawBody, signatureHeader, WEBHOOK_SECRET);
 
@@ -83,11 +84,23 @@ export const getAllAccessibleRepos = async (req: Request, res: Response) => {
 }
 
 export const importRepo = async (req: Request, res: Response) => {
-    const { githubRepoId, name, cloneUrl, installation_id } = req.body;
+    const { githubRepoId, name, cloneUrl, installation_id, installationId } = req.body;
     const userId = (req as any).user.id;
-
-    const importedRepo = await githubAppService.importThisRepo(userId, githubRepoId, name, cloneUrl, installation_id)
-    res.status(201).json({ success: true, importedRepo });
+    const instId = installation_id ?? installationId;
+    const parsedInstId = instId !== undefined && instId !== null ? Number(instId) : undefined;
+    try {
+        const importedRepo = await githubAppService.importThisRepo(userId, githubRepoId, name, cloneUrl, parsedInstId)
+        res.status(201).json({ success: true, importedRepo });
+    } catch (err: any) {
+        if (err instanceof HttpError) {
+            return res.status(err.statusCode).json({ success: false, error: err.message });
+        }
+        if (err?.message === "Repo size is greater than 1GB, which is not allowed.") {
+            return res.status(400).json({ success: false, error: err.message });
+        }
+        console.error("Error importing repo:", err);
+        return res.status(500).json({ success: false, error: err.message || "Error importing repo" });
+    }
 }
 
 export const getImportedRepos = async (req: Request, res: Response) => {

@@ -92,6 +92,7 @@ model ModelRoster{
   id String   @id @default(uuid())
   modelName String
   provider String 
+  contextWindow Int? @default(1048576)
   taskConfigs  LLMTaskConfig[]
   
   @@unique([ modelName, provider ])

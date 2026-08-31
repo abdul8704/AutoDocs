@@ -54,6 +54,7 @@
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
     "simple-git": "^3.36.0",
+    "tiktoken": "^1.0.22",
     "zod": "^4.4.3",
     "zod-to-json-schema": "^3.25.2"
   }

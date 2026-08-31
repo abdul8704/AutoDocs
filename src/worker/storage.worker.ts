@@ -5,6 +5,7 @@ import { CleanupJobData, DeepClonePushJobData, FirstTimeImportJobData } from "..
 import { constructPath } from "../utils/pathHelper.utils"
 import { checkIfRepoExists } from "../github/github.service";
 import { cloneNewRepo } from "../github/github.service";
+import { generateFirstTimeDocs } from "../pipeline/pipeline.orchestrator"
 import { rm } from "fs/promises"
 import prisma from "../prisma/prisma";
 
@@ -12,18 +13,21 @@ export const storageWorker = new Worker<StorageJobData>(
     'repo-storage-queue',
     async (job: Job<StorageJobData>) => {
         console.log(`[StorageWorker] Processing job '${job.name}' (ID: ${job.id})`);
-console.log("job started")
+        console.log("job started")
         if (job.name === "clone-first-time") {
             const repoData = job.data as FirstTimeImportJobData;
             const repoPath = constructPath(repoData.repoId);
-            
-            if(await checkIfRepoExists(repoPath)) {
+
+            if (await checkIfRepoExists(repoPath)) {
                 console.log("[StorageWorker] Repo already exists");
                 return;
             }
             // TODO: check for space
             await cloneNewRepo(repoData, repoPath);
+            console.log("[StorageWorker] Repo cloned successfully");
 
+            await generateFirstTimeDocs(repoData.repoId, repoPath);
+            console.log("[StorageWorker] First time docs generated successfully");
         }
         else if (job.name === "clone-deep-push") {
 

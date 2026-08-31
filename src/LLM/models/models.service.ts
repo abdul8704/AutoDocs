@@ -1,11 +1,12 @@
 import prisma from "../../prisma/prisma"
 
 
-export const addNewModel = async (modelName: string, provider: string) => {
+export const addNewModel = async (modelName: string, provider: string, contextWindow: number) => {
     const model = await prisma.modelRoster.create({
         data: {
             modelName,
-            provider
+            provider,
+            contextWindow
         }
     })
     return model;
@@ -25,14 +26,15 @@ export const deleteModel = async (id: string) => {
     return model;
 }
 
-export const updateModel = async (id: string, modelName: string, provider: string) => {
+export const updateModel = async (id: string, modelName: string, provider: string, contextWindow: number) => {
     await prisma.modelRoster.update({
         where: {
             id
         },
         data: {
             modelName,
-            provider
+            provider,
+            contextWindow
         }
     })
 }

@@ -7,8 +7,8 @@ export const getAllModelController = async (req: Request, res: Response) => {
 }
 
 export const addNewModelController = async (req: Request, res: Response) => {
-    const { modelName, provider } = req.body;
-    const model = await addNewModel(modelName, provider);
+    const { modelName, provider, contextWindow } = req.body;
+    const model = await addNewModel(modelName, provider, contextWindow);
     return res.status(200).json({ model });
 }
 
@@ -19,7 +19,7 @@ export const deleteModelController = async (req: Request, res: Response) => {
 }
 
 export const updateModelController = async (req: Request, res: Response) => {
-    const { id, modelName, provider } = req.body;
-    await updateModel(id, modelName, provider);
+    const { id, modelName, provider, contextWindow } = req.body;
+    await updateModel(id, modelName, provider, contextWindow);
     return res.status(200).json({ message: "Model updated successfully" });
 }
