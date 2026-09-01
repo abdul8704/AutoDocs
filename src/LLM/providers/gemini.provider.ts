@@ -23,6 +23,7 @@ export class GeminiProvider extends BaseLLMProvider {
             config: {
                 temperature: config.temperature!,
                 systemInstruction: config.systemInstruction!,
+                maxOutputTokens: config.maxOutputTokens || 16384,
             }
         });
 
@@ -47,6 +48,7 @@ export class GeminiProvider extends BaseLLMProvider {
                 responseSchema: geminiFormatSchema,
                 temperature: config.temperature!,
                 systemInstruction: config.systemInstruction!,
+                maxOutputTokens: config.maxOutputTokens || 16384,
             },
         });
 

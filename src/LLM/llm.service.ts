@@ -44,9 +44,10 @@ export class LLMService {
     return await provider.generateText(prompt, config);
   }
 
-  async getStructuredTinyRepoDocs(prompt: string) {
+  async getStructuredTinyRepoDocs(prompt: string): Promise<DocsAndPRSchema> {
     const { provider, config } = await this.getProviderAndConfig("tinyRepo");
 
+    console.log("[LLM Serive] sending prompt")
     return await provider.generateStructured<DocsAndPRSchema>(
       prompt + "\n" + JSON_ENFORCEMENT_PROMPT,
       docsAndPRSchema,

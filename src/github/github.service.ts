@@ -6,9 +6,21 @@ import { CodebaseChangeEvent, GitFetchResponse } from "../types/repo.types";
 import prisma from "../prisma/prisma";
 import * as githubAppService from "./github.app.service"
 
-import { publishCleanup, publishDeepCloneForPush } from "../queue/publishers"
+import { publishCleanup, publishDeepCloneForPush, removeJobsForRepo } from "../queue/publishers"
 import { CleanupJobData, DeepClonePushJobData, FirstTimeImportJobData } from "../queue/types.queue";
 import path from "path";
+
+export interface PRPayload {
+    repoOwner: string;
+    repoName: string;
+    repoPath: string;
+    installationId: number;
+    branchName: string;
+    commitMessage: string;
+    prTitle: string;
+    prBody: string;
+    filesToCommit: Array<{ path: string; content: string }>;
+}
 
 let git: SimpleGit = simpleGit();
 
@@ -101,10 +113,12 @@ export const githubWebhookHandlerService = async (payload: any) => {
 }
 
 export const deleteRepo = async (userId: string, repoId: string) => {
+    // 1. Remove all active, waiting, delayed, paused, or failed BullMQ jobs associated with this repo
+    await removeJobsForRepo(repoId);
+
     const path = constructPath(repoId);
 
     if (await checkIfRepoExists(path)) {
-
         const cleanUpData: CleanupJobData = {
             repoId,
             userId,
@@ -113,14 +127,76 @@ export const deleteRepo = async (userId: string, repoId: string) => {
         await publishCleanup(cleanUpData)
     }
 
+    const repos = await prisma.repo.findMany({
+        where: {
+            user_id: userId,
+            github_repo_id: repoId
+        }
+    });
+
+    const repoDbIds = repos.map((repo) => repo.id);
+    if (repoDbIds.length > 0) {
+        await prisma.docsUpdateJob.deleteMany({
+            where: {
+                repoId: { in: repoDbIds }
+            }
+        });
+    }
+
     await prisma.repo.deleteMany({
         where: {
             user_id: userId,
             github_repo_id: repoId
         }
-    })
-
+    });
 
     return;
 }
 
+
+export const writeFilesAndCommit = async (branchName: string, repoPath: string, filesToCommit: Array<{ path: string; content: string }>, commitMessage: string) => {
+    const git: SimpleGit = simpleGit(repoPath)
+    await git.checkoutLocalBranch(branchName);
+
+    for (const file of filesToCommit) {
+        const filePath = path.join(repoPath, file.path);
+
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        await fs.writeFile(filePath, file.content);
+    }
+
+    await git.add("./*");
+
+    // Setup git user (required for commits)
+    await git.addConfig('user.name', 'My AI Docs Bot');
+    await git.addConfig('user.email', 'bot@mydomain.com');
+
+    await git.commit(commitMessage);
+
+    // Push the new branch to the remote
+    await git.push('origin', branchName);
+}
+
+export const openPR = async (
+    owner: string,
+    repo: string,
+    title: string,
+    body: string,
+    head: string,
+    base: string,
+    installationId: number
+) => {
+    const octokit = await githubAppService.getInstallationOctokit(installationId);
+    const prResponse = await octokit.rest.pulls.create({
+        owner,
+        repo,
+        title,
+        body,
+        head,
+        base,
+    });
+
+    console.log(`PR successfully created: ${prResponse.data.html_url}`);
+
+    return { prNumber: prResponse.data.number, prLink: prResponse.data.html_url };
+}

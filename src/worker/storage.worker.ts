@@ -8,6 +8,7 @@ import { cloneNewRepo } from "../github/github.service";
 import { generateFirstTimeDocs } from "../pipeline/pipeline.orchestrator"
 import { rm } from "fs/promises"
 import prisma from "../prisma/prisma";
+import { DocsAndPRSchema } from "../LLM/llm.types";
 
 export const storageWorker = new Worker<StorageJobData>(
     'repo-storage-queue',
@@ -23,11 +24,32 @@ export const storageWorker = new Worker<StorageJobData>(
                 return;
             }
             // TODO: check for space
+            
+            const jobId = repoData.docJobId;
+
+            await prisma.docsUpdateJob.update({
+                where: {
+                    id: jobId
+                },
+                data: {
+                    status: "CLONING"
+                }
+            });
+            console.log("[StorageWorker] About to clone repo")
             await cloneNewRepo(repoData, repoPath);
             console.log("[StorageWorker] Repo cloned successfully");
+            
+            await prisma.docsUpdateJob.update({
+                where: {
+                    id: jobId
+                },
+                data: {
+                    status: "SCANING"
+                }
+            });
 
-            await generateFirstTimeDocs(repoData.repoId, repoPath);
-            console.log("[StorageWorker] First time docs generated successfully");
+            const prLink: string = await generateFirstTimeDocs(repoData.repoId, repoPath, jobId, repoData.githubUrl, repoData.installationId);
+            console.log("[StorageWorker] First time docs generated successfully, check PR at", prLink);
         }
         else if (job.name === "clone-deep-push") {
 
@@ -42,6 +64,7 @@ export const storageWorker = new Worker<StorageJobData>(
                     recursive: true,
                     force: true,
                 });
+                console.log("deletion done")
             }
             else if (data.action === "DELETE_USER") {
                 const repos = await prisma.repo.findMany({

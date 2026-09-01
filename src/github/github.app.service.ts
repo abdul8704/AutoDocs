@@ -137,7 +137,15 @@ export const importThisRepo = async (userId: string, githubRepoId: string, name:
     },
   });
 
+  const job = await prisma.docsUpdateJob.create({
+    data: {
+      repoId: importedRepo.id,
+      status: "PENDING",
+    }
+  });
+
   const publisherData: FirstTimeImportJobData = {
+    docJobId: job.id,
     repoId: githubRepoId,
     userId,
     installationId: effectiveInstallationId,

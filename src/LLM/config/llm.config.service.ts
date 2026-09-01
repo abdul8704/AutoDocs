@@ -17,7 +17,6 @@ export class LLMConfigService {
         prompt: true
       }
     });
-    console.log(taskKey, taskConfig, "heello");
     if (!taskConfig) {
       throw new Error(`Unable to find taskConfig for ${taskKey}`);
     }

@@ -57,6 +57,9 @@ model Repo {
   installation_id       Int
   clone_url             String
   last_processed_commit String?
+
+  jobs                  DocsUpdateJob[]
+
   created_at            DateTime @default(now())
   updated_at            DateTime @updatedAt
 
@@ -96,4 +99,34 @@ model ModelRoster{
   taskConfigs  LLMTaskConfig[]
   
   @@unique([ modelName, provider ])
+}
+
+model DocsUpdateJob{
+  id String @id @default(uuid())
+
+  repoId String
+  repository    Repo  @relation(fields: [repoId], references: [id], onDelete: Cascade)
+
+  triggerCommit String? @default("") // the SHA of commit which we are working on  
+  status JobStatus      @default(PENDING)
+
+  pullRequestId      Int?
+  branchName         String?
+
+  errorLog           String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+}
+
+enum JobStatus {
+  PENDING       // Webhook received, sitting in queue
+  CLONING       // Cloning the repo
+  SCANING       // preprocessing before sending to LLM
+  GENERATING    // LLM is currently processing the diff
+  PR_OPEN       // Generation successful, PR is waiting for user review
+  COMPLETED     // User merged the PR
+  FAILED        // Something crashed
+
+  WAITING_LLM_JUDGE // for webhook requests
+  LLM_JUDGE_REJECTED // LLM rejected the diff
 }

@@ -115,4 +115,5 @@ export const deleteRepo = async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
 
     await githubService.deleteRepo(userId, repoId);
+    return res.status(202).json({ success: true, message: "Repo deletion job started successfully" });
 }

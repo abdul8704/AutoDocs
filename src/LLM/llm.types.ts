@@ -20,9 +20,10 @@ export interface LLM_ProviderInterface {
 }
 
 export const docsAndPRSchema = z.object({
-    documentation: z.string(),
     prTitle: z.string(),
-    prBody: z.string()
+    prBody: z.string(),
+    commitMessage: z.string(),
+    documentation: z.string()
 })
 
 export type DocsAndPRSchema = z.infer<typeof docsAndPRSchema>

@@ -1,5 +1,6 @@
 /** Payload for shallow cloning a repository for the first time */
 export interface FirstTimeImportJobData {
+  docJobId: string;
   repoId: string;
   defaultBranch: string;
   installationId: number;
@@ -10,6 +11,7 @@ export interface FirstTimeImportJobData {
 
 /** Payload for deep cloning/fetching a repo when local cache is missing on push */
 export interface DeepClonePushJobData {
+  docJobId: string;
   repoId: string;
   repoFullName: string;
   defaultBranch: string;
@@ -31,6 +33,7 @@ export interface CleanupJobData {
 
 /** Payload for evaluating push events via Layer 3 Classifier LLM */
 export interface PushClassifyJobData {
+  docJobId: string;
   repoId: string;
   repoFullName: string;
   branch: string;

@@ -130,3 +130,23 @@ export const publishDocUpdate = async (data: DocUpdateJobData) => {
     jobId: `docgen-${data.repoId}-${data.afterSha}`, // Idempotent per commit SHA
   });
 };
+
+/**
+ * Publisher 4: Remove all pending/active/delayed/paused/failed jobs for a given repoId across all queues
+ */
+export const removeJobsForRepo = async (repoId: string) => {
+  const queues = [repoStorageQueue, classifyQueue, docGenQueue];
+  for (const queue of queues) {
+    const jobs = await queue.getJobs(["waiting", "active", "delayed", "failed", "completed"]);
+    for (const job of jobs) {
+      if (job.data && job.data.repoId === repoId) {
+        try {
+          await job.remove();
+          console.log(`[Queue] Removed job ${job.id} from ${queue.name} for repo ${repoId}`);
+        } catch (err) {
+          console.warn(`[Queue] Could not remove job ${job.id} from ${queue.name} for repo ${repoId}:`, err);
+        }
+      }
+    }
+  }
+};

@@ -15,8 +15,6 @@ export const isCompatibleForTinyRepo = async (git_ls: string[], codeFiles: FileR
         }
     });
 
-    console.log(config);
-
     if (!config) {
         throw new Error("Tiny repo config not found");
     }
@@ -48,8 +46,6 @@ const estimateToken = (files: FileRecord[], model: string, repoPath: string) => 
 
     const tokenIntegers = encoder.encode(packedFiles);
     const tokenCount = tokenIntegers.length;
-
-    console.log(`Repository token count: ${tokenCount}`);
 
     encoder.free();
 
