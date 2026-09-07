@@ -16,6 +16,12 @@ import promptRouter from "./LLM/prompts/prompt.router";
 import modelRouter from "./LLM/models/models.router"
 import taskConfigRouter from "./LLM/config/llm.config.router"
 
+import userRouter from "./user/user.routes";
+import jobsRouter from "./jobs/jobs.routes";
+import repoRouter from "./repo/repo.routes";
+import dashboardRouter from "./dashboard/dashboard.routes";
+import adminRouter from "./admin/admin.routes";
+
 import "./worker/storage.worker"
 import "./worker/webhook.worker"
 const app = express();
@@ -43,6 +49,11 @@ app.get("/health", (_req, res) => {
 // Everything registered below this line requires a valid access token.
 app.use(authenticate);
 
+app.use("/api/user", userRouter);
+app.use("/api/jobs", jobsRouter);
+app.use("/api/repos", repoRouter);
+app.use("/api/dashboard", dashboardRouter);
+app.use("/api/admin", adminRouter);
 app.use("/api/github", githubAppRouter);
 app.use("/api/llm-config", llmConfigRouter);
 app.use("/api/prompts", promptRouter);

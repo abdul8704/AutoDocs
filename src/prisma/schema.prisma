@@ -133,3 +133,21 @@ enum JobStatus {
   LLM_JUDGE_REJECTED // LLM rejected the diff
   DROPPED // Diff not relevant for docs update
 }
+
+model LLMLog {
+  id            String   @id @default(uuid())
+  jobId         String?  
+  taskKey       String   
+  provider      String   
+  modelName     String   
+  status        String   
+  durationMs    Int      
+  inputTokens   Int?     @default(0)
+  outputTokens  Int?     @default(0)
+  error         String?  
+  resultSummary String?  
+  createdAt     DateTime @default(now())
+
+  @@index([taskKey])
+  @@index([createdAt])
+}
