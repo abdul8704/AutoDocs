@@ -35,8 +35,7 @@ export interface CleanupJobData {
 export interface PushClassifyJobData {
   docJobId: string;
   repoId: string;
-  repoFullName: string;
-  branch: string;
+  ref: string;
   defaultBranch: string;
   beforeSha: string;
   afterSha: string;

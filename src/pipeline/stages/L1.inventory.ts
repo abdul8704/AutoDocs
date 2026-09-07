@@ -4,17 +4,26 @@ import fs from "fs";
 import { FileRecord } from "../pipeline.types"
 import crypto from "crypto";
 
-const CODE_EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".py", ".java", ".kt",
+const MIN_DOC_SIZE_BYTES = 450;
+
+export const CODE_EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".py", ".java", ".kt",
     ".go", ".rs", ".rb", ".php", ".cs", ".swift", ".c", ".cpp", ".scala"]);
 
-const KEEP_NONCODE = new Set([".html", ".css", ".scss", ".sql", ".graphql", ".prisma",
+export const KEEP_NONCODE = new Set([".html", ".css", ".scss", ".sql", ".graphql", ".prisma",
     ".yml", ".yaml", ".json", ".toml", ".md", ".proto", ".tf"]);
 
-const EXCLUDE_DIRS = new Set(["node_modules", "vendor", "dist", "build", "target", ".next",
+export const DOC_EXTS = new Set([".md", ".mdx", ".rst", ".adoc"]);
+
+export const EXCLUDE_DIRS = new Set(["node_modules", "vendor", "dist", "build", "target", ".next",
     "__pycache__", ".venv", "coverage", ".git", "bin", "obj", ".vscode", ".cursor", ".antigravity", ".claude"]);
 
-const EXCLUDE_FILES = new Set(["package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+export const EXCLUDE_FILES = new Set(["package-lock.json", "yarn.lock", "pnpm-lock.yaml",
     "poetry.lock", "go.sum", "Cargo.lock", "composer.lock", ".gitignore", ".dockerignore"]);
+
+export const BLACKLISTED_DOC_NAMES = new Set([
+    "license", "copying", "changelog", "releases", "history", 
+    "contributing", "code_of_conduct", "security", "pull_request_template"
+]);
 
 // Intent files feed the L4 bundle (project purpose, stack, deployment).
 // Everything else non-code rides along into its folder's module instead —
@@ -32,52 +41,37 @@ const INTENT_RES: RegExp[] = [
 export const PUBLISHED_ARCH_DOC = "architecture.md";
 export const PUBLISHED_DOCS_DIR = "docs";
 
-const isPublishedDoc = (relPath: string): boolean => {
+export const isPublishedDoc = (relPath: string): boolean => {
     const normalized = relPath.replace(/\\/g, "/").toLowerCase();
     return normalized === PUBLISHED_ARCH_DOC ||
         (normalized.startsWith(`${PUBLISHED_DOCS_DIR}/`) && normalized.endsWith(".md"));
 };
 
 
-const isIntentFile = (rel: string): boolean => {
-
+export const isIntentFile = (rel: string): boolean => {
     for (const re of INTENT_RES) {
-
         if (re.test(rel)) {
             return true;
         }
     }
-
     return false;
 };
 
-/**
- * Path-only relevance check — no filesystem access. Used by the webhook
- * pipeline to triage a git diff BEFORE any cloning or LLM spend: a push whose
- * changed paths are all irrelevant (lockfiles, images, excluded dirs) can be
- * dropped for free. Must stay in sync with getRepoFiles' classification.
- */
-export const isRelevantPath = (rel: string): boolean => {
+export const isBlacklistedDoc = (rel: string): boolean => {
+    const ext = path.extname(rel).toLowerCase();
+    if (!DOC_EXTS.has(ext)) return false;
 
-    const normalized = rel.replace(/\\/g, "/");
-    const ext = path.extname(normalized).toLowerCase();
+    // Check base name without extension (e.g., 'changelog.md' -> 'changelog')
+    const baseName = path.basename(rel, ext).toLowerCase();
+    if (BLACKLISTED_DOC_NAMES.has(baseName)) return true;
 
-    if (normalized.split("/").some(p => EXCLUDE_DIRS.has(p))) {
-        return false;
+    // Check for GitHub templates
+    const normalized = rel.replace(/\\/g, "/").toLowerCase();
+    if (normalized.startsWith(".github/issue_template/") || normalized.includes("pull_request_template")) {
+        return true;
     }
 
-    if (EXCLUDE_FILES.has(path.basename(normalized))) {
-        return false;
-    }
-
-    // Our own output from a previous run. Reading it back would let the model
-    // echo the old document instead of writing a new one from the code, and
-    // would spend the judge's diff budget reviewing a file we wrote ourselves.
-    if (isPublishedDoc(normalized)) {
-        return false;
-    }
-
-    return CODE_EXTS.has(ext) || KEEP_NONCODE.has(ext) || isIntentFile(normalized);
+    return false;
 };
 
 export const getRepoFiles = async (git: SimpleGit, repoPath: string) => {
@@ -90,6 +84,7 @@ export const getRepoFiles = async (git: SimpleGit, repoPath: string) => {
     const codeFiles: FileRecord[] = [];
     const intentFiles: FileRecord[] = [];
     const others: FileRecord[] = [];
+    const docFiles: FileRecord[] = [];
 
     for (const rel of files) {
         const ext = path.extname(rel).toLowerCase();
@@ -100,6 +95,9 @@ export const getRepoFiles = async (git: SimpleGit, repoPath: string) => {
             continue;
 
         if (isPublishedDoc(rel))
+            continue;
+
+        if (isBlacklistedDoc(rel))
             continue;
 
         // Classify by extension BEFORE reading — skips disk I/O for files we
@@ -136,7 +134,10 @@ export const getRepoFiles = async (git: SimpleGit, repoPath: string) => {
             contentHash: crypto.createHash("sha256").update(buf).digest("hex"),
         };
 
-        if (isIntentFile(rel)) {
+        if (DOC_EXTS.has(ext) && buf.length >= MIN_DOC_SIZE_BYTES) {
+            docFiles.push(record);
+        }
+        else if (isIntentFile(rel)) {
             intentFiles.push(record);
         }
         else if (CODE_EXTS.has(ext)) {
@@ -148,5 +149,5 @@ export const getRepoFiles = async (git: SimpleGit, repoPath: string) => {
         // unknown extensions: dropped (binaries already excluded above)
     }
 
-    return { files, codeFiles, intentFiles, others };
+    return { files, codeFiles, intentFiles, docFiles, others };
 }

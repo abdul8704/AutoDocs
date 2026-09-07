@@ -17,6 +17,7 @@ import modelRouter from "./LLM/models/models.router"
 import taskConfigRouter from "./LLM/config/llm.config.router"
 
 import "./worker/storage.worker"
+import "./worker/webhook.worker"
 const app = express();
 
 app.use("/api/webhooks", githubRouter);

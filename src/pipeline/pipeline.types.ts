@@ -5,3 +5,18 @@ export interface FileRecord {
   contentHash: string;   // sha256 hex of file bytes
   isCode: boolean;       // matched a code extension (drives import scanning)
 }
+
+export interface DiffSummary {
+  changed: number;
+  insertions: number;
+  deletions: number;
+  files: [{
+    file: string;
+    changes: number;
+    insertions: number;
+    deletions: number;
+    binary: boolean;
+  }];
+}
+
+export type JobStatus = "PENDING" | "CLONING" | "SCANING" | "GENERATING" | "PR_OPEN" | "COMPLETED" | "FAILED" | "WAITING_LLM_JUDGE" | "LLM_JUDGE_REJECTED" | "DROPPED";

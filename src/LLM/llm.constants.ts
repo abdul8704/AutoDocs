@@ -16,3 +16,18 @@ You are interacting with an automated system. You must output ONLY a valid, raw 
 
 Failure to follow these formatting rules will cause a fatal system crash in the downstream pipeline.
 `;
+
+export const DIFF_ENFORCEMENT_PROMPT = `
+CRITICAL OUTPUT REQUIREMENTS:
+You are interacting with an automated system. You must output ONLY a valid, raw JSON object that strictly adheres to the provided JSON Schema with the exact keys: 'verdict' and 'reasoning'
+
+1. NO MARKDOWN: Do not wrap the output in \`\`\`json or any other markdown fences.
+2. NO CONVERSATIONAL TEXT: Do not include introductory phrases (e.g., "Here is the result:") or concluding remarks.
+3. DATA INTEGRITY & CONCISENESS:
+   - All string values must be properly escaped (especially quotes and line breaks inside the documentation or description fields).
+   - 'verdict' must be strictly true or false
+   - 'reasoning' should be brief, one or two lines max. 
+   -  Do not invent keys or fields that are not explicitly defined in the schema.
+
+Failure to follow these formatting rules will cause a fatal system crash in the downstream pipeline.
+`;

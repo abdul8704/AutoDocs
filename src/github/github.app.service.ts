@@ -36,6 +36,26 @@ export const getInstallationToken = async (installationId: number): Promise<stri
   const auth = await octokit.auth({ type: "installation" }) as { token: string };
   return auth.token;
 }
+export const getHeadSha = async (repoId: number, installationId: number) => {
+    const octokit = await getInstallationOctokit(installationId);
+
+  const { data: repoData } = await octokit.request('GET /repositories/{repository_id}', {
+    repository_id: repoId,
+    headers: { 'X-GitHub-Api-Version': '2022-11-28' }
+  });
+
+  const owner = repoData.owner.login;
+  const repo = repoData.name;
+  const defaultBranch = repoData.default_branch;
+
+  const { data: commitData } = await octokit.rest.repos.getCommit({
+    owner,
+    repo,
+    ref: defaultBranch,
+  });
+
+  return commitData.sha;
+}
 
 export const getAllRepos = async (installationId: number) => {
   const octokit = await getInstallationOctokit(installationId);
@@ -106,6 +126,8 @@ export const importThisRepo = async (userId: string, githubRepoId: string, name:
     throw new HttpError(400, "GitHub App is not installed for this user yet");
   }
 
+  const headSha = await getHeadSha(Number(githubRepoId), effectiveInstallationId);
+
   const url = new URL(cloneUrl);
   const installationToken: string = await getInstallationToken(effectiveInstallationId);
   
@@ -115,7 +137,7 @@ export const importThisRepo = async (userId: string, githubRepoId: string, name:
   const repo = parts[2].replace('.git', '');
 
   const repoSize = await getRepoSizeOctokit(owner, repo, installationToken);
-
+  console.log(headSha);
   if (repoSize > 1000 * 1024 * 1024) {
       throw new HttpError(400, "Repo size is greater than 1GB, which is not allowed.");
   }
@@ -127,6 +149,7 @@ export const importThisRepo = async (userId: string, githubRepoId: string, name:
       installation_id: effectiveInstallationId,
       clone_url: cloneUrl,
       full_name: name,
+      last_processed_commit: headSha
     },
     create: {
       user_id: userId,
@@ -134,6 +157,7 @@ export const importThisRepo = async (userId: string, githubRepoId: string, name:
       full_name: name,
       clone_url: cloneUrl,
       installation_id: effectiveInstallationId,
+      last_processed_commit: headSha
     },
   });
 

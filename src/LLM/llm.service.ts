@@ -1,7 +1,7 @@
 import { LLMConfigService } from './config/llm.config.service';
 import { LLMFactory } from './llm.factory';
-import { SUPPORTED_PROVIDERS, SupportedProviders, DocsAndPRSchema, docsAndPRSchema, LLM_ProviderInterface, LLMRuntimeConfig, LLMTaskType } from "./llm.types"
-import { JSON_ENFORCEMENT_PROMPT } from "./llm.constants"
+import { SUPPORTED_PROVIDERS, SupportedProviders, DocsAndPRSchema, docsAndPRSchema, diffJudgeSchema, DiffJudgeSchema, LLM_ProviderInterface, LLMRuntimeConfig, LLMTaskType } from "./llm.types"
+import { JSON_ENFORCEMENT_PROMPT, DIFF_ENFORCEMENT_PROMPT } from "./llm.constants"
 
 export class LLMService {
 
@@ -24,11 +24,13 @@ export class LLMService {
     return { provider, config: result.config };
   }
 
-  async evaluateDiff(gitDiff: string) {
+  async evaluateDiffStructured(userPrompt: string): Promise<DiffJudgeSchema> {
     const { provider, config } = await this.getProviderAndConfig("judge");
-    const userPrompt = `Evaluate the following git diff:\n\n${gitDiff}`;
 
-    return await provider.generateText(userPrompt, config);
+    return await provider.generateStructured<DiffJudgeSchema>(
+      userPrompt + "\n" + DIFF_ENFORCEMENT_PROMPT, 
+      diffJudgeSchema, 
+      config);
   }
 
   async testLLM () {

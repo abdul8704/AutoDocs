@@ -11,7 +11,7 @@ import { HttpError } from "../utils/httpError.utils";
 const WEBHOOK_SECRET = env.GITHUB_WEBHOOK_SECRET;
 
 export const githubHandler = async (req: Request, res: Response) => {
-    console.log("Request recieved !!", req.body);
+    console.log("Webhook recieved");
 
     const signatureHeader = req.headers['x-hub-signature-256'] as string | undefined;
 
@@ -33,7 +33,6 @@ export const githubHandler = async (req: Request, res: Response) => {
 
     if (event !== "push") // dont bother about anything other than push event
         return res.status(200)
-
     await githubService.githubWebhookHandlerService(payload);
     res.status(200).json({ success: true, message: "It works " });
 }

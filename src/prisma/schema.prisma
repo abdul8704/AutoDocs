@@ -113,6 +113,8 @@ model DocsUpdateJob{
   pullRequestId      Int?
   branchName         String?
 
+  prLink   String?
+
   errorLog           String?
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
@@ -129,4 +131,5 @@ enum JobStatus {
 
   WAITING_LLM_JUDGE // for webhook requests
   LLM_JUDGE_REJECTED // LLM rejected the diff
+  DROPPED // Diff not relevant for docs update
 }

@@ -3,12 +3,13 @@ import { redisConnection } from "../config/redis";
 import type { StorageJobData } from "../queue/types.queue"
 import { CleanupJobData, DeepClonePushJobData, FirstTimeImportJobData } from "../queue/types.queue"
 import { constructPath } from "../utils/pathHelper.utils"
-import { checkIfRepoExists } from "../github/github.service";
+import { checkIfRepoExists, fetchLocalChanges, pullChanges } from "../github/github.service";
 import { cloneNewRepo } from "../github/github.service";
 import { generateFirstTimeDocs } from "../pipeline/pipeline.orchestrator"
 import { rm } from "fs/promises"
 import prisma from "../prisma/prisma";
 import { DocsAndPRSchema } from "../LLM/llm.types";
+import { updateJobStatus } from "../pipeline/pipeline.helper";
 
 export const storageWorker = new Worker<StorageJobData>(
     'repo-storage-queue',
@@ -18,38 +19,36 @@ export const storageWorker = new Worker<StorageJobData>(
         if (job.name === "clone-first-time") {
             const repoData = job.data as FirstTimeImportJobData;
             const repoPath = constructPath(repoData.repoId);
-
-            if (await checkIfRepoExists(repoPath)) {
-                console.log("[StorageWorker] Repo already exists");
-                return;
-            }
-            // TODO: check for space
-            
             const jobId = repoData.docJobId;
-
-            await prisma.docsUpdateJob.update({
-                where: {
-                    id: jobId
-                },
-                data: {
-                    status: "CLONING"
-                }
-            });
-            console.log("[StorageWorker] About to clone repo")
-            await cloneNewRepo(repoData, repoPath);
-            console.log("[StorageWorker] Repo cloned successfully");
             
-            await prisma.docsUpdateJob.update({
-                where: {
-                    id: jobId
-                },
-                data: {
-                    status: "SCANING"
+            try {
+                if (await checkIfRepoExists(repoPath)) {
+                    console.log("[StorageWorker] Repo already exists");
+                    await pullChanges(repoPath);
                 }
-            });
+                else{
+                    await updateJobStatus(jobId, "CLONING");
+                    console.log("[StorageWorker] About to clone repo")
+                    await cloneNewRepo(repoData.githubUrl, repoPath);
+                    console.log("[StorageWorker] Repo cloned successfully");
+                }
+                
+                await updateJobStatus(jobId, "SCANING")
 
-            const prLink: string = await generateFirstTimeDocs(repoData.repoId, repoPath, jobId, repoData.githubUrl, repoData.installationId);
-            console.log("[StorageWorker] First time docs generated successfully, check PR at", prLink);
+                const prLink: string = await generateFirstTimeDocs(repoData.repoId, repoPath, jobId, repoData.githubUrl, repoData.installationId, repoData.defaultBranch);
+                console.log("[StorageWorker] First time docs generated successfully, check PR at", prLink);
+            } catch (err: any) {
+                console.error(`[StorageWorker] Job '${job.name}' (ID: ${job.id}) failed:`, err);
+                await prisma.docsUpdateJob.update({
+                    where: { id: jobId },
+                    data: {
+                        status: "FAILED",
+                        errorLog: err instanceof Error ? err.message : String(err)
+                    }
+                }).catch(dbErr => console.error("[StorageWorker] Failed to update docsUpdateJob status to FAILED in DB:", dbErr));
+
+                throw err; // Re-throw so BullMQ registers the job failure in Redis
+            }
         }
         else if (job.name === "clone-deep-push") {
 

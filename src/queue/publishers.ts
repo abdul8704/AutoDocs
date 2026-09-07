@@ -102,22 +102,17 @@ export const publishCleanup = async (data: CleanupJobData) => {
 export const publishPushForClassification = async (
   data: PushClassifyJobData
 ) => {
-  const jobId = `classify-${data.repoId}-${data.branch}`;
+  const jobId = `push-classify-${data.repoId}-${data.defaultBranch}`;
 
   // Debouncing: Check if a delayed job is already waiting in queue
   const existingJob = await classifyQueue.getJob(jobId);
   if (existingJob) {
-    // Retain the original starting SHA from the earliest push in this window
-    if (existingJob.data?.beforeSha) {
-      data.beforeSha = existingJob.data.beforeSha;
-    }
-    // Remove old job to reset the 10-minute timer
     await existingJob.remove();
   }
 
-  return await classifyQueue.add("classify-push", data, {
-    jobId,
-    delay: 10 * 60 * 1000, // 10-Minute Debounce Delay
+  return await classifyQueue.add("push-classify-queue", data, {
+    jobId
+    // delay: 10 * 60 * 1000, // 10-Minute Debounce Delay
   });
 };
 
@@ -149,4 +144,4 @@ export const removeJobsForRepo = async (repoId: string) => {
       }
     }
   }
-};
+};

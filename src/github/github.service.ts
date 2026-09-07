@@ -6,8 +6,8 @@ import { CodebaseChangeEvent, GitFetchResponse } from "../types/repo.types";
 import prisma from "../prisma/prisma";
 import * as githubAppService from "./github.app.service"
 
-import { publishCleanup, publishDeepCloneForPush, removeJobsForRepo } from "../queue/publishers"
-import { CleanupJobData, DeepClonePushJobData, FirstTimeImportJobData } from "../queue/types.queue";
+import { publishCleanup, publishDeepCloneForPush, publishPushForClassification, removeJobsForRepo } from "../queue/publishers"
+import { CleanupJobData, DeepClonePushJobData, FirstTimeImportJobData, PushClassifyJobData } from "../queue/types.queue";
 import path from "path";
 
 export interface PRPayload {
@@ -24,21 +24,43 @@ export interface PRPayload {
 
 let git: SimpleGit = simpleGit();
 
+export const fetchLocalChanges = async (repoId: string, ref: string) => {
+    git = simpleGit(constructPath(repoId));
+    const branch = ref.replace("refs/heads/", "");
+
+    await git.fetch(["origin", branch]);
+    console.log("local changes downloaded successfully")
+}
+
+export const pullChanges = async (repoPath: string) => {
+    git = simpleGit(repoPath);
+    await git.pull("origin");
+    console.log("remote changes pulled successfully");
+}
+export const mergeChanges = async (repoPath: string, branch: string) => {
+    git = simpleGit(repoPath);
+    await git.checkout(branch);
+    await git.merge([`origin/${branch}`]);
+    console.log("remote changes merged successfully");
+}
 // clone the repo into our base
-export const cloneNewRepo = async (data: FirstTimeImportJobData, repoPath: string) => {
+export const cloneNewRepo = async (cloneUrl: string, repoPath: string, cloneMode: "shallow" | "deep" = "shallow") => {
     // creates path like codebases/<repo_id>/
-    const cloneUrl = data.githubUrl
     const rootPath = path.dirname(repoPath);
-    console.log(`[StorageWorker] Cloning ${data.repoId} into ${repoPath}`);
-    console.log(`Cloning start: ${Date.now()}`);
+    console.log(`Cloning start: ${Date.now()} in ${cloneMode} mode`);
 
     await mkdir(rootPath, { recursive: true });
     git = simpleGit(rootPath);
 
-    await git.clone(cloneUrl, repoPath, [
-        "--depth=1",
-        "--single-branch",
-    ]);
+    if (cloneMode == "shallow") {
+        await git.clone(cloneUrl, repoPath, [
+            "--depth=1",
+            "--single-branch",
+        ]);
+    }
+    else {
+        await git.clone(cloneUrl, repoPath);
+    }
 
     console.log(`✅ Successfully cloned: ${repoPath}`);
     console.log(`Cloning end: ${Date.now()}`);
@@ -52,6 +74,7 @@ export const checkIfRepoExists = async (pathOrRepoId: string): Promise<boolean> 
             : createPath("codebases", pathOrRepoId);
 
         const stats = await fs.stat(targetPath);
+        console.log("[CheckIfExists]", targetPath, stats.isDirectory());
         return stats.isDirectory();
     } catch (err: any) {
         if (err.code === "ENOENT") {
@@ -59,22 +82,6 @@ export const checkIfRepoExists = async (pathOrRepoId: string): Promise<boolean> 
         }
         throw err;
     }
-}
-
-export const fetchAndClassify = async (event: CodebaseChangeEvent, repoName: string) => {
-    const repoUrl: string = await githubAppService.getAuthenticatedRepoUrl(event.repo.clone_url, event.installation.id);
-    const fetchResult: GitFetchResponse = await git.fetch(repoUrl, "main");
-
-
-    // do git fetch
-    // get our commit id from db
-    // compare it with afterSHA in the event object with git DIFF
-    // send diff file, docs, repo tree to LLM for classification
-
-    // return LLM decision
-
-    // if LLM says no updation, update db to this commit
-    // if LLM saya updation needed, do "git merge", send new files, docs to LLM and update new docs
 }
 
 export const githubWebhookHandlerService = async (payload: any) => {
@@ -99,16 +106,34 @@ export const githubWebhookHandlerService = async (payload: any) => {
             return;
         }
 
-        // --- FUTURE PRICING CHECK (SEAMLESS INTEGRATION) ---
+        // TODO: FUTURE PRICING CHECK (SEAMLESS INTEGRATION) ---
         // if (importedRepo.user.usedDocsQuota >= 15 && importedRepo.user.planType === 'FREE') {
         //    return res.status(200).send("Quota exceeded");
         // }
 
+        const job = await prisma.docsUpdateJob.create({
+            data: {
+                repoId: importedRepo.id,
+                status: "PENDING",
+            }
+        });
+        console.log("Starting webhok job")
+
         console.log(`🚀 Triggering doc update for imported repo: ${importedRepo.user.name}`);
         console.log(`Commit hash: ${payload.after}`);
 
-        // 4. CALL YOUR DOC GENERATION / SIMPLE-GIT SERVICE HERE
-        // await processRepoUpdate(importedRepo.id, importedRepo.installation_id, payload.after);
+        const workerObject: PushClassifyJobData = {
+            docJobId: job.id,
+            ref: payload.ref,
+            repoId: importedRepo.id,
+            installationId: importedRepo.installation_id,
+            afterSha: payload.after,
+            beforeSha: payload.before,
+            defaultBranch: "main",
+            userId: importedRepo.user.id,
+        }
+
+        await publishPushForClassification(workerObject);
     }
 }
 
@@ -154,9 +179,21 @@ export const deleteRepo = async (userId: string, repoId: string) => {
 }
 
 
-export const writeFilesAndCommit = async (branchName: string, repoPath: string, filesToCommit: Array<{ path: string; content: string }>, commitMessage: string) => {
-    const git: SimpleGit = simpleGit(repoPath)
-    await git.checkoutLocalBranch(branchName);
+export const writeFilesAndCommit = async (
+    branchName: string,
+    repoPath: string,
+    filesToCommit: Array<{ path: string; content: string }>,
+    commitMessage: string,
+    authenticatedUrl: string
+) => {
+    const git: SimpleGit = simpleGit(repoPath);
+
+    const branches = await git.branchLocal();
+    if (branches.all.includes(branchName)) {
+        await git.checkout(branchName);
+    } else {
+        await git.checkoutLocalBranch(branchName);
+    }
 
     for (const file of filesToCommit) {
         const filePath = path.join(repoPath, file.path);
@@ -173,6 +210,8 @@ export const writeFilesAndCommit = async (branchName: string, repoPath: string, 
 
     await git.commit(commitMessage);
 
+    await git.remote(['set-url', 'origin', authenticatedUrl]);
+
     // Push the new branch to the remote
     await git.push('origin', branchName);
 }
@@ -187,16 +226,42 @@ export const openPR = async (
     installationId: number
 ) => {
     const octokit = await githubAppService.getInstallationOctokit(installationId);
-    const prResponse = await octokit.rest.pulls.create({
-        owner,
-        repo,
-        title,
-        body,
-        head,
-        base,
-    });
+    
+    try {
+        const prResponse = await octokit.rest.pulls.create({
+            owner,
+            repo,
+            title,
+            body,
+            head,
+            base,
+        });
 
-    console.log(`PR successfully created: ${prResponse.data.html_url}`);
+        console.log(`PR successfully created: ${prResponse.data.html_url}`);
+        return { prNumber: prResponse.data.number, prLink: prResponse.data.html_url };
+    } catch (err: any) {
+        // Fallback: If PR already exists for this head branch, update the existing PR
+        if (err.status === 422) {
+            const existingPrs = await octokit.rest.pulls.list({
+                owner,
+                repo,
+                head: `${owner}:${head}`,
+                state: "open"
+            });
 
-    return { prNumber: prResponse.data.number, prLink: prResponse.data.html_url };
+            if (existingPrs.data.length > 0) {
+                const existingPr = existingPrs.data[0];
+                await octokit.rest.pulls.update({
+                    owner,
+                    repo,
+                    pull_number: existingPr.number,
+                    title,
+                    body,
+                });
+                console.log(`PR already exists, updated PR #${existingPr.number}: ${existingPr.html_url}`);
+                return { prNumber: existingPr.number, prLink: existingPr.html_url };
+            }
+        }
+        throw err;
+    }
 }

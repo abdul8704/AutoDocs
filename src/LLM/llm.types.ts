@@ -26,7 +26,13 @@ export const docsAndPRSchema = z.object({
     documentation: z.string()
 })
 
-export type DocsAndPRSchema = z.infer<typeof docsAndPRSchema>
+export const diffJudgeSchema = z.object({
+    verdict: z.boolean(),
+    reasoning: z.string()
+});
+
+export type DocsAndPRSchema = z.infer<typeof docsAndPRSchema>;
+export type DiffJudgeSchema = z.infer<typeof diffJudgeSchema>;
 
 export const SUPPORTED_PROVIDERS = ['gemini', 'openai', 'anthropic'] as const;
 
