@@ -1,9 +1,23 @@
 import { FileRecord } from "../pipeline.types";
 import { packFiles } from "../pipeline.helper";
 import { LLMService } from "../../LLM/llm.service";
-import { DocsAndPRSchema } from "../../LLM/llm.types";
+import { DocsAndPRSchema, TinyRepoPayload } from "../../LLM/llm.types";
 
-export const generateDocsTinyRepo = async (codeFiles: FileRecord[], intentFiles: FileRecord[], docFiles: FileRecord[], others: FileRecord[], repoPath: string, llmService: LLMService): Promise<DocsAndPRSchema> => {
+export const generateDocsTinyRepo = async (
+    jobId: string,
+    codeFiles: FileRecord[], 
+    intentFiles: FileRecord[], 
+    docFiles: FileRecord[], 
+    others: FileRecord[], 
+    repoPath: string, 
+    llmService: LLMService,
+    userId: string,
+    repoId: string,
+    commitSha: string,
+    promptSuffix?: string,
+): Promise<DocsAndPRSchema> =>
+    {
+    
     console.log("[PIPELINE] Packing files")
     const codeFilesPacked = packFiles(codeFiles, repoPath);
     const intentFilesPacked = packFiles(intentFiles, repoPath);
@@ -11,19 +25,32 @@ export const generateDocsTinyRepo = async (codeFiles: FileRecord[], intentFiles:
     const docsFiles = packFiles(docFiles, repoPath)
 
     const prompt = `
-    Docs \n
+    <docs>
     ${docsFiles}
+    </docs>
     
-    Codefiles \n
+    <codefiles>
     ${codeFilesPacked}
+    </codefiles>
 
-    Intentfiles \n
+    <intentfiles>
     ${intentFilesPacked}
+    </intentfiles>
 
-    Others \n
+    <others>
     ${othersPacked}
+    </others>
     `
-    const docs: DocsAndPRSchema = await llmService.getStructuredTinyRepoDocs(prompt);
+    const payload: TinyRepoPayload = {
+        userId,
+        repoId,
+        taskKey: "tinyRepo",
+        currentCommitSha: commitSha,
+        promptPrefix: prompt,
+        promptSuffix: promptSuffix ?? ""
+    };
+
+    const docs: DocsAndPRSchema = await llmService.getStructuredTinyRepoDocs(payload, jobId);
     console.log("[PIPELINE] Docs generated successfully");
 
     return docs;

@@ -1,8 +1,9 @@
 import { LLMConfigService } from './config/llm.config.service';
 import { LLMFactory } from './llm.factory';
-import { SUPPORTED_PROVIDERS, SupportedProviders, DocsAndPRSchema, docsAndPRSchema, diffJudgeSchema, DiffJudgeSchema, LLM_ProviderInterface, LLMRuntimeConfig, LLMTaskType } from "./llm.types"
+import { SUPPORTED_PROVIDERS, SupportedProviders, DocsAndPRSchema, docsAndPRSchema, diffJudgeSchema, DiffJudgeSchema, LLM_ProviderInterface, LLMRuntimeConfig, LLMTaskType, TinyRepoPayload } from "./llm.types"
 import { JSON_ENFORCEMENT_PROMPT, DIFF_ENFORCEMENT_PROMPT } from "./llm.constants"
 import prisma from "../prisma/prisma";
+import { ScopedCacheService } from "./llm.cache.service";
 
 export class LLMService {
 
@@ -81,38 +82,61 @@ export class LLMService {
     return await provider.generateText(userPrompt, config);
   }
 
-  async getTinyRepoDocs(prompt: string, jobId?: string) {
+  async getStructuredTinyRepoDocs(payload: TinyRepoPayload, jobId: string): Promise<DocsAndPRSchema> {
     const { provider, config, providerName } = await this.getProviderAndConfig("tinyRepo");
     const startTime = Date.now();
+    console.log("[LLM Service] sending prompt");
+    const cacheService = new ScopedCacheService();
+    
     try {
-      const result = await provider.generateText(prompt, config);
+      const cacheName = await cacheService.createOrGetCache({
+        userId: payload.userId,
+        repoId: payload.repoId,
+        taskKey: "tinyRepo",
+        currentCommitSha: payload.currentCommitSha,
+        providerName: providerName, // Crucial for dynamic routing
+        model: config.model,
+        systemInstruction: config.systemInstruction + "\n" + JSON_ENFORCEMENT_PROMPT,
+        promptPrefix: payload.promptPrefix
+      });
+      console.log("got the cache ", cacheName);
+      let finalPrompt = "";
+
+      if(cacheName){
+        finalPrompt = payload.promptSuffix;
+      }
+      else{
+        finalPrompt = payload.promptPrefix + (payload.promptSuffix != "" ? payload.promptSuffix : "");
+      }
+
+      const runTimeConfig: LLMRuntimeConfig = {
+        ...config,
+        systemInstruction: `${config.systemInstruction || ""}\n${JSON_ENFORCEMENT_PROMPT}`.trim(),
+        cacheName: cacheName ?? undefined
+      }
+
+      const result = await provider.generateStructured<DocsAndPRSchema>(
+        finalPrompt,
+        docsAndPRSchema,
+        runTimeConfig
+      );
+      
       const durationMs = Date.now() - startTime;
-      await this.recordLog("tinyRepo", providerName, config.model, "SUCCESS", durationMs, result.substring(0, 200), undefined, jobId);
+      
+      await this.recordLog("tinyRepo", providerName, config.model, "SUCCESS", durationMs, `PR Title: ${result.prTitle}`, undefined, jobId);
       return result;
-    } catch (err: any) {
+    } 
+    catch (err: any) {
       const durationMs = Date.now() - startTime;
       await this.recordLog("tinyRepo", providerName, config.model, "FAILED", durationMs, undefined, err?.message || String(err), jobId);
       throw err;
     }
   }
+  async checkCache(userId: string, repoId: string, taskKey: string, currentCommitSha: string) {
+    const { provider, config, providerName } = await this.getProviderAndConfig(taskKey as LLMTaskType);
+    const cacheService = new ScopedCacheService();
 
-  async getStructuredTinyRepoDocs(prompt: string, jobId?: string): Promise<DocsAndPRSchema> {
-    const { provider, config, providerName } = await this.getProviderAndConfig("tinyRepo");
-    const startTime = Date.now();
-    console.log("[LLM Service] sending prompt");
-    try {
-      const result = await provider.generateStructured<DocsAndPRSchema>(
-        prompt + "\n" + JSON_ENFORCEMENT_PROMPT,
-        docsAndPRSchema,
-        config
-      );
-      const durationMs = Date.now() - startTime;
-      await this.recordLog("tinyRepo", providerName, config.model, "SUCCESS", durationMs, `PR Title: ${result.prTitle}`, undefined, jobId);
-      return result;
-    } catch (err: any) {
-      const durationMs = Date.now() - startTime;
-      await this.recordLog("tinyRepo", providerName, config.model, "FAILED", durationMs, undefined, err?.message || String(err), jobId);
-      throw err;
-    }
+    const { exists, key } = await cacheService.checkIfCacheValid(userId, repoId, taskKey, currentCommitSha, config.model);
+    return exists;
   }
 }

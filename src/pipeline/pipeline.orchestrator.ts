@@ -7,11 +7,15 @@ import { LLMService } from "../LLM/llm.service";
 import { DocsAndPRSchema } from "../LLM/llm.types";
 import { writeFilesAndCommit, openPR, mergeChanges } from "../github/github.service";
 import { generateDocsTinyRepo } from "./stages/L4.tinyDocs"
-import { evaluateDiff, llmJudge } from "./stages/L2.judge";
+import { evaluateDiff, getChangedFilesPacked, getRemovedFiles, llmJudge } from "./stages/L2.judge";
 import { clone } from "zod";
+import { CACHE_RECONCILIATION_ENFORCEMENT_PROMPT } from "../LLM/llm.constants";
+import { ScopedCacheService } from "../LLM/llm.cache.service";
 
 export const generateFirstTimeDocs = async (
+    userId: string,
     repoId: string,
+    currentCommitSha: string,
     repoPath: string,
     jobId: string,
     cloneUrl: string,
@@ -46,7 +50,7 @@ export const generateFirstTimeDocs = async (
         await updateJobStatus(jobId, "GENERATING");
 
         console.log("[PIPELINE] Preprocessing done, about to generate docs")
-        const generatedDocs: DocsAndPRSchema = await generateDocsTinyRepo(codeFiles, intentFiles, docFiles, others, repoPath, llmService);
+        const generatedDocs: DocsAndPRSchema = await generateDocsTinyRepo(jobId, codeFiles, intentFiles, docFiles, others, repoPath, llmService, userId, repoId, currentCommitSha);
 
         console.log("[PIPELINE] Writing to repo");
 
@@ -89,6 +93,8 @@ export const generateFirstTimeDocs = async (
 }
 
 export const handleWebhooks = async (
+    userId: string,
+    repoId: string,
     jobId: string,
     repoPath: string,
     beforeSha: string,
@@ -135,7 +141,6 @@ export const handleWebhooks = async (
         return { regenerated: false, prLink: null };
     }
 
-
     await mergeChanges(repoPath, ref.replace("refs/heads/", ""));
     console.log("merge, pack files, re run pipeline");
 
@@ -147,11 +152,69 @@ export const handleWebhooks = async (
     }
     await updateJobStatus(jobId, "GENERATING");
 
-    console.log("[PIPELINE] Preprocessing done, about to generate docs for webhook pipeline")
-    const generatedDocs: DocsAndPRSchema = await generateDocsTinyRepo(codeFiles, intentFiles, docFiles, others, repoPath, llmService);
+    let generatedDocs: DocsAndPRSchema;
+    
+    // cache not expired, and we can just add and send the new updations
+    if(await llmService.checkCache(userId, repoId, "tinyRepo", beforeSha)){
+        const removedFiles: string = await getRemovedFiles(git, beforeSha, afterSha);
+        const {
+            codeFilesNew,
+            intentFilesNew,
+            docFilesNew,
+            othersNew
+        } = getChangedFilesPacked(diffSummary as DiffSummary, repoPath);
+        
+        const promptSuffix = `
+        <deleted_files>
+            ${removedFiles}
+        </deleted_files>
+        
+        <updated_files>
+            <code_files>
+                ${codeFilesNew}
+            </code_files>
+            <intent_files>
+                ${intentFilesNew}
+            </intent_files>
+            <doc_files>
+                ${docFilesNew}
+            </doc_files>
+            <other_files>
+                ${othersNew}
+            </other_files>
+        </updated_files>
+        `
+        generatedDocs = await generateDocsTinyRepo(
+            jobId, 
+            codeFiles, 
+            intentFiles, 
+            docFiles, 
+            others, 
+            repoPath, 
+            llmService, 
+            userId, 
+            repoId, 
+            afterSha, 
+            promptSuffix + "\n" + CACHE_RECONCILIATION_ENFORCEMENT_PROMPT
+        );
+    }
+    else{
+        generatedDocs = await generateDocsTinyRepo(
+            jobId, 
+            codeFiles, 
+            intentFiles, 
+            docFiles, 
+            others, 
+            repoPath, 
+            llmService, 
+            userId, 
+            repoId, 
+            afterSha
+        );
+    }
 
     console.log("[PIPELINE] Writing to repo");
-
+    
     await writeFilesAndCommit("autoDocs", repoPath, [{
         path: "ARCHITECTURE.md",
         content: generatedDocs.documentation

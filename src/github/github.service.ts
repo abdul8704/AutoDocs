@@ -35,7 +35,11 @@ export const fetchLocalChanges = async (repoId: string, ref: string) => {
 export const pullChanges = async (repoPath: string) => {
     git = simpleGit(repoPath);
     await git.pull("origin");
+    
     console.log("remote changes pulled successfully");
+
+    const sha = await git.revparse(["HEAD"]);
+    return sha.trim();
 }
 export const mergeChanges = async (repoPath: string, branch: string) => {
     git = simpleGit(repoPath);
@@ -64,6 +68,11 @@ export const cloneNewRepo = async (cloneUrl: string, repoPath: string, cloneMode
 
     console.log(`✅ Successfully cloned: ${repoPath}`);
     console.log(`Cloning end: ${Date.now()}`);
+
+    git = simpleGit(repoPath);
+    const sha = await git.revparse(["HEAD"]);
+
+    return sha.trim();
 }
 
 // check if the repo already exists in our local base
@@ -92,8 +101,6 @@ export const githubWebhookHandlerService = async (payload: any) => {
 
     // Only process pushes to the main/default branch
     if (branch === defaultBranch) {
-
-
         // has the user imported this repo??
         const importedRepo = await prisma.repo.findUnique({
             where: { github_repo_id: githubRepoId },

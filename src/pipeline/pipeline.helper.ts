@@ -71,6 +71,17 @@ export const packFiles = (files: FileRecord[], repoPath: string) => {
     return packedFiles
 }
 
+export const packFilesByName = (filePaths: string[], repoPath: string) => {
+    let packedFiles = '';
+
+    for (const filePath of filePaths) {
+        packedFiles += `\n\n--- FILE: ${filePath} ---\n`;
+        packedFiles += fs.readFileSync(path.join(repoPath, filePath), 'utf8');
+    }
+
+    return packedFiles;
+}
+
 export const updateJobStatus = async (jobId: string, status: JobStatus) => {
     await prisma.docsUpdateJob.update({
         where: {

@@ -22,20 +22,22 @@ export const storageWorker = new Worker<StorageJobData>(
             const jobId = repoData.docJobId;
             
             try {
+                let headSha: string;
                 if (await checkIfRepoExists(repoPath)) {
                     console.log("[StorageWorker] Repo already exists");
-                    await pullChanges(repoPath);
+                    headSha = await pullChanges(repoPath);
                 }
                 else{
                     await updateJobStatus(jobId, "CLONING");
                     console.log("[StorageWorker] About to clone repo")
-                    await cloneNewRepo(repoData.githubUrl, repoPath);
+
+                    headSha = await cloneNewRepo(repoData.githubUrl, repoPath);
                     console.log("[StorageWorker] Repo cloned successfully");
                 }
                 
                 await updateJobStatus(jobId, "SCANING")
 
-                const prLink: string = await generateFirstTimeDocs(repoData.repoId, repoPath, jobId, repoData.githubUrl, repoData.installationId, repoData.defaultBranch);
+                const prLink: string = await generateFirstTimeDocs(repoData.userId, repoData.repoId, headSha, repoPath, jobId, repoData.githubUrl, repoData.installationId, repoData.defaultBranch);
                 console.log("[StorageWorker] First time docs generated successfully, check PR at", prLink);
             } catch (err: any) {
                 console.error(`[StorageWorker] Job '${job.name}' (ID: ${job.id}) failed:`, err);

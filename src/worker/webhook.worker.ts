@@ -45,7 +45,7 @@ export const webhookWorker = new Worker<PushClassifyJobData>(
 
             const before = repoData.last_processed_commit ?? job.data.beforeSha;
 
-            const { regenerated, prLink } = await handleWebhooks(jobId, repoPath, before, job.data.afterSha, job.data.ref, job.data.installationId, authenticatedCloneUrl);
+            const { regenerated, prLink } = await handleWebhooks(job.data.userId, job.data.repoId, jobId, repoPath, before, job.data.afterSha, job.data.ref, job.data.installationId, authenticatedCloneUrl);
 
             if(!regenerated) {
                 return;

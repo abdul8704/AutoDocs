@@ -5,6 +5,29 @@ export interface LLMRuntimeConfig {
     systemInstruction: string;
     temperature: number;
     maxOutputTokens?: number;
+    cacheName?: string
+}
+
+export interface CacheLookupParams {
+  userId: string;
+  repoId: string;
+  taskKey: string;
+  currentCommitSha: string;
+  providerName: string;
+  model: string;
+  systemInstruction: string;
+  promptPrefix: string;
+  ttlSeconds?: number;
+}
+
+export interface TinyRepoPayload {
+  userId: string;
+  repoId: string;
+  taskKey: string;
+  currentCommitSha: string;
+  promptPrefix: string; // initial prompt consisting of packed codebase, sent during first time doc gen
+  promptSuffix: string; // codebase changed files, sent during webhook doc regen call, this is null during first time doc gen call
+  // NOTE: promptSuffix must be explicitly set to empty string during first time doc gen call
 }
 
 export interface LLM_ProviderInterface {

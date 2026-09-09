@@ -31,3 +31,32 @@ You are interacting with an automated system. You must output ONLY a valid, raw 
 
 Failure to follow these formatting rules will cause a fatal system crash in the downstream pipeline.
 `;
+
+export const CACHE_RECONCILIATION_ENFORCEMENT_PROMPT = `
+CRITICAL CACHE RECONCILIATION REQUIREMENTS:
+You are updating technical documentation for an evolving codebase. The baseline state of the codebase is already pre-loaded into your active context memory under <latest_codebase>. 
+
+You are provided with a dynamic delta representing changes made since that baseline:
+
+1. FILE DELETIONS (<deleted_files>):
+   - The files listed here have been permanently removed from the repository.
+   - You MUST surgically eliminate all references to these files, their data models, exported interfaces, and API routes from the documentation and Mermaid diagrams.
+
+2. WHOLE-FILE OVERRIDES (<updated_files>):
+   - Contains the full, definitive contents of newly added or modified files.
+   - Execute a complete in-memory replacement: discard the baseline version of these files from your cached context and substitute them with these exact contents.
+   - Treat these contents as the absolute current implementation.
+
+3. ARCHITECTURAL RECONCILIATION:
+   - Identify all ripple effects across layers (e.g., how a schema change affects routes or business logic).
+   - Update Mermaid diagrams (flowchart, erDiagram, sequenceDiagram) to reflect new entities, removed dependencies, or altered data flows.
+   - Preserve human-written tribal knowledge, badges, custom links, and existing formatting from <existing_documentation> unless invalidated by the code changes.
+   - Do not hallucinate external services or endpoints not evident in the codebase.
+
+4. OUTPUT INTEGRITY:
+   - You must output ONLY a valid, raw JSON object matching the schema: 'prTitle', 'prBody', 'commitMessage', and 'documentation'.
+   - 'prTitle' must follow Conventional Commits (e.g., 'docs: update schema models and auth routes').
+   - 'prBody' must clearly summarize what was changed in the docs and why.
+   - 'commitMessage' must be a concise, single-line commit summary.
+   - Do NOT wrap the JSON in markdown code blocks (\`\`\`json).
+`;

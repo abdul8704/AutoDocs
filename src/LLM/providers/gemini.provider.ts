@@ -24,6 +24,7 @@ export class GeminiProvider extends BaseLLMProvider {
                 temperature: config.temperature!,
                 systemInstruction: config.systemInstruction!,
                 maxOutputTokens: config.maxOutputTokens || 16384,
+                cachedContent: config.cacheName ? config.cacheName: undefined,
             }
         });
 
@@ -47,8 +48,9 @@ export class GeminiProvider extends BaseLLMProvider {
                 responseMimeType: 'application/json',
                 responseSchema: geminiFormatSchema,
                 temperature: config.temperature!,
-                systemInstruction: config.systemInstruction!,
+                systemInstruction: config.cacheName ? undefined : config.systemInstruction,
                 maxOutputTokens: config.maxOutputTokens || 16384,
+                cachedContent: config.cacheName ? config.cacheName: undefined,
             },
         });
 
