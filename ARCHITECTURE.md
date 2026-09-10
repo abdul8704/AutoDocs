@@ -1,139 +1,115 @@
 # System Architecture & Technical Documentation
 
 ## 1. System Overview
-* **High-Level Purpose:** AutoDocs is an automated AI-powered documentation engine designed for GitHub repositories. It monitors codebases, evaluates diffs from push events via webhooks, generates up-to-date repository technical documentation (e.g., `ARCHITECTURE.md`), and automatically submits Pull Requests containing updated documentation to user repositories.
-* **Core Design Pattern:** Distributed Asynchronous Queue Architecture & Layered Micro-services Pattern.
-  - **Frontend:** React SPA built with Vite and context-driven state management.
-  - **Backend Server:** Node.js Express REST API handling authentication, webhooks, admin management, and job orchestration.
-  - **Queue & Worker Pipeline:** Redis-backed BullMQ processing asynchronous storage, classification, and heavy LLM documentation tasks.
-  - **Database:** PostgreSQL managed via Prisma ORM for persistent refresh sessions, user settings, repository metadata, LLM prompt/model rosters, and telemetry logs.
-
----
+* **High-Level Purpose:** AutoDocs is an automated AI documentation engine designed to streamline technical documentation maintenance for GitHub repositories. It integrates directly with GitHub via OAuth and GitHub Apps, listens to repository commit push webhooks, processes file inventories and code diffs using asynchronous queue workers (BullMQ + Redis), and leverages Google Gemini LLMs with scoped context caching to generate and update dynamic `ARCHITECTURE.md` files via automated Pull Requests.
+* **Core Design Pattern:** Layered Architecture combined with an Event-Driven Asynchronous Pipeline (Producer/Consumer Queues) and Provider Pattern for LLM services.
 
 ## 2. Technology Stack & Dependencies
-
 | Category | Technology / Library | Purpose in this Project |
 | :--- | :--- | :--- |
-| **Frontend Core** | React 18, TypeScript, Vite | User dashboard interface, auth management, repository selection, and job status tracking |
-| **UI & Icons** | Lucide React, Custom CSS Glassmorphism | Responsive modern dark-mode user interface |
-| **Backend Core** | Express.js, Node.js (v22), TypeScript | Core REST API backend, webhooks receiver, middleware enforcement |
-| **Database & ORM** | PostgreSQL, Prisma ORM, `@prisma/adapter-pg` | Relational data persistence for users, sessions, jobs, and LLM configurations |
-| **Message Broker** | Redis, BullMQ, `ioredis` | Asynchronous task queues (`repo-storage-queue`, `push-classify-queue`, `doc-generation-queue`) |
-| **Authentication** | GitHub OAuth 2.0, JWT, bcrypt, cookie-parser | Access token issuance, httpOnly refresh session persistence, password hashing |
-| **GitHub Integration**| Octokit (`@octokit/rest`, `@octokit/auth-app`), `simple-git` | GitHub App API interactions, repository cloning, branch management, and Pull Request creation |
-| **LLM & AI Engine** | `@google/genai` (Google Gemini API), Tiktoken, Zod | Token context calculation, structured JSON prompt generation, git diff evaluation |
-
----
+| Frontend Framework | React 18, Vite | Single-page application UI for developer dashboard and app authorization |
+| Styling & Icons | Custom Glassmorphism CSS, Lucide React | Modern dark-theme developer UI icons and layout components |
+| Backend Runtime | Node.js (v22), Express.js (v5) | REST API server, OAuth callback provider, and webhook receiver |
+| Language | TypeScript | Full-stack static typing across server, workers, and client |
+| Relational Database | PostgreSQL 17, Prisma ORM (v7) | Data persistence for users, sessions, imported repositories, jobs, and LLM logs/caches |
+| Queue & In-Memory Store | Redis 8, BullMQ (v6) | Asynchronous task queues for disk storage operations, push classification, and LLM doc generation |
+| AI / LLM Engine | Google GenAI SDK (`@google/genai`), Tiktoken | Code tokenization, LLM diff evaluation, structured doc generation, and Gemini context caching |
+| Git & GitHub Integration | Octokit (`@octokit/rest`, `@octokit/auth-app`), Simple-Git | GitHub App installation token management, repository clone/pull, branch management, and PR creation |
+| Authentication | JWT (`jsonwebtoken`), Bcrypt, Cookie-Parser | Access token authorization and secure HttpOnly refresh token session management |
 
 ## 3. High-Level Architecture Diagram
-
 ```mermaid
 flowchart TD
-    subgraph Client["Client Layer"]
-        ReactClient["React + Vite Single Page App"]
+    subgraph Client["Frontend Client (React + Vite)"]
+        UI["Dashboard & Auth UI"]
+        API_Client["API Client (api.ts)"]
     end
 
-    subgraph API["Express API Gateway Layer"]
-        AuthMiddleware["Auth & JWT Middleware"]
-        WebhookEndpoint["Webhook Endpoint (/api/webhooks/github)"]
-        RestAPI["REST API Controllers"]
+    subgraph Server["Express API Gateway"]
+        AuthModule["Auth Controller & JWT Service"]
+        GithubModule["GitHub App & Webhook Routes"]
+        PipelineModule["Pipeline Orchestrator & Inventory"]
+        LLMModule["LLM Factory & Gemini Provider"]
     end
 
-    subgraph Storage["Database & Storage"]
-        Postgres[("PostgreSQL Database")]
-        Prisma["Prisma ORM"]
-        LocalFS["Local Codebase Storage (/codebases)"]
+    subgraph Data["Data & Queue Layer"]
+        DB[("PostgreSQL Database")]
+        Redis[("Redis Broker")]
+        Queues["BullMQ Queues\n(repoStorageQueue, classifyQueue, docGenQueue)"]
     end
 
-    subgraph QueueLayer["Async Queue System (BullMQ)"]
-        Redis[("Redis Store")]
-        StorageQueue["repo-storage-queue"]
-        ClassifyQueue["push-classify-queue"]
-        DocGenQueue["doc-generation-queue"]
-    end
-
-    subgraph Workers["Background Job Workers"]
+    subgraph Workers["Background Workers"]
         StorageWorker["Storage Worker"]
-        WebhookWorker["Webhook / Classify Worker"]
+        WebhookWorker["Push Classify / Webhook Worker"]
     end
 
-    subgraph External["External Integrations"]
-        GitHubApp["GitHub App REST API"]
-        GeminiAI["Google Gemini API (LLM Engine)"]
+    subgraph External["External Services"]
+        GitHubAPI["GitHub API & Webhooks"]
+        GeminiAPI["Google Gemini API & Context Cache"]
     end
 
-    ReactClient -->|"REST API Calls"| AuthMiddleware
-    AuthMiddleware --> RestAPI
-    GitHubApp -->|"Push Webhooks"| WebhookEndpoint
-    RestAPI --> Prisma
-    Prisma --> Postgres
-    RestAPI -->|"Publish Jobs"| QueueLayer
-    WebhookEndpoint -->|"Publish Push Events"| ClassifyQueue
-    QueueLayer --> Redis
-    StorageWorker -->|"Fetch Jobs"| StorageQueue
-    WebhookWorker -->|"Fetch Jobs"| ClassifyQueue
-    StorageWorker -->|"Clone / Pull Code"| LocalFS
-    WebhookWorker -->|"Inspect Diffs"| LocalFS
-    StorageWorker -->|"Generate Structured Docs"| GeminiAI
-    WebhookWorker -->|"Judge Diff Relevance"| GeminiAI
-    StorageWorker -->|"Open PRs"| GitHubApp
-    WebhookWorker -->|"Open PRs / Update PRs"| GitHubApp
+    UI --> API_Client
+    API_Client -- "HTTP Requests (Bearer JWT)" --> Server
+    GitHubAPI -- "Push Webhooks (HMAC SHA-256)" --> GithubModule
+    Server -- "Prisma ORM" --> DB
+    Server -- "Publish Jobs" --> Queues
+    Queues <--> Redis
+    Queues --> StorageWorker
+    Queues --> WebhookWorker
+    StorageWorker -- "Simple-Git & Octokit" --> GitHubAPI
+    WebhookWorker -- "Simple-Git & Octokit" --> GitHubAPI
+    StorageWorker -- "Generate Docs" --> LLMModule
+    WebhookWorker -- "Diff Judge & Re-gen" --> LLMModule
+    LLMModule -- "@google/genai SDK" --> GeminiAPI
 ```
-
----
 
 ## 4. Directory & Module Structure
-
 ```
-/ (Repository Root)
-├── client/                     # Frontend React application
+. 
+├── client/                       # React + Vite Frontend Application
 │   ├── src/
-│   │   ├── components/         # Dashboard UI components (RepoList, ImportedRepoList, etc.)
-│   │   ├── context/            # Authentication Context & Provider
-│   │   ├── services/           # Client API integration layer
-│   │   ├── App.tsx             # Root React application wrapper
-│   │   └── main.tsx            # DOM Mounting script
-│   └── vite.config.ts          # Vite bundler & dev server proxy config
-├── src/                        # Backend Node.js Express Application
-│   ├── admin/                  # Admin controllers, routes, and master telemetry statistics
-│   ├── auth/                   # Authentication controllers, JWT service, OAuth providers
-│   ├── config/                 # Environment validation (env.ts) & Redis settings
-│   ├── dashboard/              # User dashboard statistics services
-│   ├── github/                 # GitHub App management, webhooks handler, simple-git drivers
-│   ├── jobs/                   # Job status, retrieval, and retry controllers
-│   ├── LLM/                    # Dynamic LLM provider factory, prompt registry, Gemini integrations
-│   ├── pipeline/               # Multi-stage documentation generation orchestrator & stages
-│   │   └── stages/             # Stage L1 (Inventory), Stage L2 (Judge), Stage L4 (TinyDocs)
-│   ├── prisma/                 # Database Prisma Client instantiation & migration configuration
-│   ├── queue/                  # BullMQ queues definitions and publisher methods
-│   ├── repo/                   # Imported repository management and document file fetchers
-│   ├── user/                   # User profile fetching and mutation services
-│   ├── worker/                 # Storage worker & Webhook classifier background workers
-│   └── index.ts                # Application entry point and Express server router initialization
-├── Dockerfile                  # Container build instructions
-├── docker-compose.yml          # Postgres, Redis, and App container setup
-└── package.json                # Server runtime dependencies and scripts
+│   │   ├── components/          # UI pages and components (Dashboard, RepoList, Banner, Login)
+│   │   ├── context/             # AuthContext for user state & token refresh
+│   │   ├── services/            # API fetch client wrapper with automatic retry on 401
+│   │   ├── App.tsx              # Root application router component
+│   │   └── types.ts             # Client-side TypeScript interfaces
+│   └── vite.config.ts           # Vite server configuration and dev proxies
+├── src/                          # Express Backend Application
+│   ├── admin/                   # Admin controllers and telemetry endpoints
+│   ├── auth/                    # OAuth providers (GitHub), JWT signing, session handlers
+│   ├── config/                  # Environment variable schema validation & Redis setup
+│   ├── dashboard/               # Developer dashboard statistical service
+│   ├── github/                  # GitHub App permissions, repo cloning, webhook verification
+│   ├── jobs/                    # Documentation update job query and retry handlers
+│   ├── LLM/                     # Gemini provider, factory, Zod schema mappings, scoped caching
+│   ├── pipeline/                # Inventory scanners, diff judges, and pipeline orchestrator
+│   ├── prisma/                  # Prisma Client initializer, migrations, and schema definition
+│   ├── queue/                   # BullMQ publisher queues and job payload interfaces
+│   ├── repo/                    # Repository details and manual doc generation endpoints
+│   ├── user/                    # User profile controller and service layer
+│   ├── worker/                  # Storage worker and push classify queue consumers
+│   └── index.ts                 # Server entry point, route registrations, and middleware
+├── Dockerfile                   # Docker image definition with git alpine binaries
+└── docker-compose.yml           # Container orchestrator (App, Postgres 17, Redis 8)
 ```
-
----
 
 ## 5. Data Models & Database Schema
-
 ```mermaid
 erDiagram
-    USER ||--o{ REFRESH_SESSION : "has"
-    USER ||--o{ REPO : "owns"
-    REPO ||--o{ DOCS_UPDATE_JOB : "executes"
-    LLM_TASK_CONFIG }|--|| MODEL_ROSTER : "configures"
-    LLM_TASK_CONFIG }|--|| PROMPT : "uses"
+    User ||--o{ RefreshSession : "has"
+    User ||--o{ Repo : "owns"
+    User ||--o{ LLMCache : "owns"
+    Repo ||--o{ DocsUpdateJob : "has"
+    Repo ||--o{ LLMCache : "has"
+    ModelRoster ||--o{ LLMTaskConfig : "configures"
+    Prompt ||--o{ LLMTaskConfig : "configures"
 
-    USER {
+    User {
         string id PK
         string name
-        string githubId UK
-        string email UK
+        string githubId
+        string email
         string profileUrl
-        string password_hash
         int githubInstallationId
         string planType
         int usedDocsQuota
@@ -141,7 +117,7 @@ erDiagram
         datetime updated_at
     }
 
-    REFRESH_SESSION {
+    RefreshSession {
         string id PK
         string userId FK
         string hashedRefreshToken
@@ -151,10 +127,10 @@ erDiagram
         datetime updatedAt
     }
 
-    REPO {
+    Repo {
         string id PK
         string user_id FK
-        string github_repo_id UK
+        string github_repo_id
         string full_name
         int installation_id
         string clone_url
@@ -163,22 +139,9 @@ erDiagram
         datetime updated_at
     }
 
-    DOCS_UPDATE_JOB {
+    LLMTaskConfig {
         string id PK
-        string repoId FK
-        string triggerCommit
-        enum status
-        int pullRequestId
-        string branchName
-        string prLink
-        string errorLog
-        datetime createdAt
-        datetime updatedAt
-    }
-
-    LLM_TASK_CONFIG {
-        string id PK
-        string taskKey UK
+        string taskKey
         string modelRosterId FK
         string promptId FK
         float temperature
@@ -186,7 +149,7 @@ erDiagram
         datetime updatedAt
     }
 
-    PROMPT {
+    Prompt {
         string id PK
         string prompt_key
         string version
@@ -195,14 +158,27 @@ erDiagram
         datetime updatedAt
     }
 
-    MODEL_ROSTER {
+    ModelRoster {
         string id PK
         string modelName
         string provider
         int contextWindow
     }
 
-    LLM_LOG {
+    DocsUpdateJob {
+        string id PK
+        string repoId FK
+        string triggerCommit
+        JobStatus status
+        int pullRequestId
+        string branchName
+        string prLink
+        string errorLog
+        datetime createdAt
+        datetime updatedAt
+    }
+
+    LLMLog {
         string id PK
         string jobId
         string taskKey
@@ -216,110 +192,59 @@ erDiagram
         string resultSummary
         datetime createdAt
     }
-```
 
----
+    LLMCache {
+        string id PK
+        string userId FK
+        string repoId FK
+        string taskKey
+        string commitSha
+        string cacheName
+        string model
+        datetime expiresAt
+        datetime createdAt
+        datetime updatedAt
+    }
+```
 
 ## 6. API Surface, Routes & Interfaces
 
-### Authentication Routes (`/auth`)
 | Method | Endpoint | Auth | Description |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/auth/github` | None | Initiates GitHub OAuth authentication flow |
-| `GET` | `/auth/github/callback` | None | Handles GitHub OAuth callback and sets HttpOnly refresh cookie |
-| `GET` | `/auth/google` | None | Google OAuth flow stub |
-| `GET` | `/auth/google/callback` | None | Google OAuth callback stub |
-| `POST` | `/auth/refresh` | Cookie | Refreshes access JWT using valid httpOnly refresh session cookie |
-| `POST` | `/auth/logout` | Cookie | Revokes current refresh session |
-| `DELETE` | `/auth/user` | Bearer JWT | Permanently deletes user account |
-
-### Webhooks (`/api/webhooks`)
-| Method | Endpoint | Auth | Description |
-| :--- | :--- | :--- | :--- |
-| `POST` | `/api/webhooks/github` | HMAC SHA256 Signature | Processes GitHub `push` event payloads |
-
-### GitHub App & Repositories (`/api/github`)
-| Method | Endpoint | Auth | Description |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/github/setup` | Query State | Post-installation callback handling from GitHub App setup |
-| `GET` | `/api/github/installation-status` | Bearer JWT | Verifies if current user has installed the GitHub App |
-| `GET` | `/api/github/accessible-repos` | Bearer JWT | Lists repositories accessible to the GitHub App installation |
-| `GET` | `/api/github/imported-repos` | Bearer JWT | Lists repositories imported into AutoDocs by the user |
-| `POST` | `/api/github/import-repo` | Bearer JWT | Imports repository, performs initial clone, and triggers doc generation |
-| `DELETE` | `/api/github/repo/:repoId` | Bearer JWT | Deletes an imported repository and schedules workspace cleanup |
-
-### Jobs & Documentation Management (`/api/jobs`, `/api/repos`)
-| Method | Endpoint | Auth | Description |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/jobs` | Bearer JWT | Retrieves paginated documentation update jobs |
-| `GET` | `/api/jobs/:jobId` | Bearer JWT | Gets details for a specific documentation job |
-| `POST` | `/api/jobs/:jobId/retry` | Bearer JWT | Re-queues a failed or pending job |
-| `GET` | `/api/repos/:repoId` | Bearer JWT | Gets repository details and job execution history |
-| `POST` | `/api/repos/:repoId/trigger` | Bearer JWT | Manually triggers documentation generation for a repository |
-| `GET` | `/api/repos/:repoId/docs` | Bearer JWT | Fetches generated `ARCHITECTURE.md` content |
-
-### LLM Configuration & Admin Services (`/api/admin`, `/api/llm-config`, `/api/prompts`, `/api/models`)
-| Method | Endpoint | Auth | Description |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/admin/users` | Bearer JWT | Lists system users with usage metrics |
-| `GET` | `/api/admin/stats` | Bearer JWT | Master platform analytics and BullMQ queue health check |
-| `GET` | `/api/llm-config` | Bearer JWT | Fetches configured task-to-model LLM mappings |
-| `POST` | `/api/prompts` | Bearer JWT | Registers or updates dynamic prompt templates |
-| `GET` | `/api/models` | Bearer JWT | Lists available LLM model roster |
-
----
+| `GET` | `/auth/github` | None | Initiates GitHub OAuth login flow |
+| `GET` | `/auth/github/callback` | None | Handles GitHub OAuth callback and sets HttpOnly refresh token cookie |
+| `POST` | `/auth/refresh` | Cookie | Validates refresh token session and issues a new access token |
+| `POST` | `/auth/logout` | Cookie | Revokes active refresh token session |
+| `DELETE` | `/auth/user` | Bearer JWT | Deletes user account and associated credentials |
+| `POST` | `/api/webhooks/github` | HMAC Signature | Receives GitHub push events with signature validation |
+| `GET` | `/api/github/setup` | Query State | GitHub App post-installation callback handler |
+| `GET` | `/api/github/installation-status` | Bearer JWT | Fetches GitHub App installation status for user |
+| `GET` | `/api/github/accessible-repos` | Bearer JWT | Fetches accessible repositories from GitHub App installation |
+| `GET` | `/api/github/imported-repos` | Bearer JWT | Retrieves user's imported repositories |
+| `POST` | `/api/github/import-repo` | Bearer JWT | Imports repository and queues initial documentation job |
+| `DELETE` | `/api/github/repo/:repoId` | Bearer JWT | Removes repository, cleans local workspace, and deletes associated jobs |
+| `GET` | `/api/dashboard/stats` | Bearer JWT | Retrieves user quota and job execution statistics |
+| `GET` | `/api/jobs` | Bearer JWT | Lists documentation update jobs with optional filters |
+| `GET` | `/api/jobs/:jobId` | Bearer JWT | Retrieves specific job status and error logs |
+| `POST` | `/api/jobs/:jobId/retry` | Bearer JWT | Re-queues a failed or pending documentation job |
+| `GET` | `/api/repos/:repoId` | Bearer JWT | Fetches repository details and recent executions |
+| `POST` | `/api/repos/:repoId/trigger` | Bearer JWT | Triggers a manual documentation generation pipeline run |
+| `GET` | `/api/repos/:repoId/docs` | Bearer JWT | Retrieves current generated `ARCHITECTURE.md` file |
+| `GET` | `/api/llm-config` | Bearer JWT | Admin endpoint to view LLM task configurations |
+| `GET` | `/api/prompts` | Bearer JWT | Admin endpoint to list prompt templates |
+| `GET` | `/api/models` | Bearer JWT | Admin endpoint to list model roster items |
 
 ## 7. Key Data Flows & Sequences
 
-### First-Time Repository Import Flow
 ```mermaid
 sequenceDiagram
     autonumber
-    actor User as Developer
-    participant Frontend as React Dashboard
-    participant API as Express API Server
-    participant DB as PostgreSQL (Prisma)
-    participant Queue as Storage Queue (BullMQ)
+    actor Developer
+    participant UI as React Dashboard
+    participant API as Express Server
+    participant Queue as BullMQ Storage Queue
     participant Worker as Storage Worker
-    participant Gemini as Gemini LLM Service
-    participant GitHub as GitHub API
+    participant LLM as Gemini Provider & Cache
+    participant GitHub as GitHub App API
 
-    User->>Frontend: Click "Import Repo"
-    Frontend->>API: POST /api/github/import-repo
-    API->>GitHub: Request Installation Access Token & Head Commit SHA
-    API->>DB: Upsert Repo & Create DocsUpdateJob (PENDING)
-    API->>Queue: Publish 'clone-first-time' Job
-    API-->>Frontend: Return 201 Created
-    Queue->>Worker: Consume 'clone-first-time' job
-    Worker->>Worker: Shallow Clone repository locally
-    Worker->>Worker: Stage L1 Inventory (Scan code, docs, and intent files)
-    Worker->>Gemini: Request Structured Docs & PR Content
-    Gemini-->>Worker: Return JSON (prTitle, prBody, commitMessage, documentation)
-    Worker->>Worker: Write ARCHITECTURE.md & Commit to local branch 'autoDocs'
-    Worker->>GitHub: Push branch & Open Pull Request
-    Worker->>DB: Update DocsUpdateJob (PR_OPEN, prLink)
-```
-
----
-
-## 8. Configuration & Environment Variables
-
-| Variable | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `PORT` | Number | No (Default `5000`) | Express API HTTP server listening port |
-| `GITHUB_WEBHOOK_SECRET` | String | Yes | HMAC Secret used to verify GitHub webhook signatures |
-| `GITHUB_CLIENT_ID` | String | Yes | GitHub OAuth App Client ID |
-| `GITHUB_CLIENT_SECRET` | String | Yes | GitHub OAuth App Client Secret |
-| `GITHUB_APP_ID` | String | Yes | GitHub App ID |
-| `GITHUB_APP_PRIVATE_KEY` | String | Yes | GitHub App Private Key for installation token signing |
-| `GITHUB_APP_SLUG` | String | Yes | GitHub App URL slug name (e.g. `aiautodocs`) |
-| `DATABASE_URL` | String | Yes | PostgreSQL connection string URL |
-| `JWT_ACCESS_SECRET` | String | Yes | Secret key used to sign access JWTs |
-| `JWT_REFRESH_SECRET` | String | Yes | Secret key used to sign session refresh JWTs |
-| `ACCESS_TOKEN_EXPIRY` | String | Yes | Access token expiration duration (e.g. `15m`) |
-| `REFRESH_TOKEN_EXPIRY` | String | Yes | Refresh session token expiration duration (e.g. `7d`) |
-| `SERVER_URL` | URL | Yes | Publicly accessible URL for Express API server |
-| `CLIENT_URL` | URL | Yes | Frontend application base URL |
-| `GEMINI_API_KEY` | String | Yes | API key for Google Gemini Generative AI Service |
-| `REDIS_HOST` | String | No (Default `localhost`) | Hostname for Redis instance |
-| `REDIS_PORT` | Number | No (Default `6379`) | Connection port for Redis instance |
+    Developer->>UI: Select repo & click 
