@@ -54,7 +54,7 @@ export const generateFirstTimeDocs = async (
 
         console.log("[PIPELINE] Writing to repo");
 
-        await writeFilesAndCommit("autoDocs", repoPath, [{
+        await writeFilesAndCommit("auto-Docs", repoPath, [{
             path: "ARCHITECTURE.md",
             content: generatedDocs.documentation
         }], generatedDocs.commitMessage, cloneUrl);
@@ -69,7 +69,7 @@ export const generateFirstTimeDocs = async (
             repoName,
             generatedDocs.prTitle,
             generatedDocs.prBody,
-            "autoDocs",
+            "auto-Docs",
             defaultBranch,
             installationId
         )
@@ -82,7 +82,7 @@ export const generateFirstTimeDocs = async (
             },
             data: {
                 status: "PR_OPEN",
-                branchName: "autoDocs",
+                branchName: "auto-Docs",
                 pullRequestId: prNumber,
                 prLink
             }
@@ -215,7 +215,7 @@ export const handleWebhooks = async (
 
     console.log("[PIPELINE] Writing to repo");
     
-    await writeFilesAndCommit("autoDocs", repoPath, [{
+    await writeFilesAndCommit("auto-Docs", repoPath, [{
         path: "ARCHITECTURE.md",
         content: generatedDocs.documentation
     }], generatedDocs.commitMessage, cloneUrl);
@@ -232,7 +232,7 @@ export const handleWebhooks = async (
         repoName,
         generatedDocs.prTitle,
         generatedDocs.prBody,
-        "autoDocs",
+        "auto-Docs",
         baseBranch,
         installationId
     )
@@ -245,7 +245,7 @@ export const handleWebhooks = async (
         },
         data: {
             status: "PR_OPEN",
-            branchName: "autoDocs",
+            branchName: "auto-Docs",
             pullRequestId: prNumber,
             prLink
         }

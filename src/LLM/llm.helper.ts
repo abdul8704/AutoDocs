@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import prisma from "../prisma/prisma";
 
 /**
  * Converts a Zod schema to standard JSON Schema supported natively by Gemini.
@@ -23,4 +24,28 @@ export function zodToGeminiSchema(zodSchema: z.ZodTypeAny) {
   };
 
   return cleanSchema(jsonSchema);
+}
+
+export async function calculateGeminiCost(
+  modelName: string, 
+  promptTokens: number, 
+  cachedTokens: number, 
+  outputTokens: number
+): Promise<number> {
+  
+  const modelCost = await prisma.modelRoster.findFirst({
+    where: { modelName: modelName }
+  });
+  if (!modelCost) {
+    throw new Error(`Model ${modelName} not found in roster`);
+  }
+  let inputRate = modelCost.inputPrice; 
+  let cachedRate = modelCost.cachedPrice; 
+  let outputRate = modelCost.outputPrice; 
+
+  const inputCost = (promptTokens / 1_000_000) * inputRate;
+  const cachedCost = (cachedTokens / 1_000_000) * cachedRate;
+  const outputCost = (outputTokens / 1_000_000) * outputRate;
+
+  return inputCost + cachedCost + outputCost;
 }

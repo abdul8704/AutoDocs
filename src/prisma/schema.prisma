@@ -99,8 +99,13 @@ model ModelRoster{
   id String   @id @default(uuid())
   modelName String
   provider String 
-  contextWindow Int? @default(1048576)
+  contextWindow Int? @default(1048576) // 1 million context window
   taskConfigs  LLMTaskConfig[]
+
+  //USD per million tokens
+  inputPrice Float @default(0.0)
+  cachedPrice Float @default(0.0)
+  outputPrice Float @default(0.0)
   
   @@unique([ modelName, provider ])
 }
@@ -146,10 +151,18 @@ model LLMLog {
   modelName     String   
   status        String   
   durationMs    Int      
-  inputTokens   Int?     @default(0)
-  outputTokens  Int?     @default(0)
+
   error         String?  
   resultSummary String?  
+
+  promptTokens        Int      @default(0)
+  cachedTokens        Int      @default(0)
+  inputTokens         Int      @default(0)
+  outputTokens        Int      @default(0)
+
+  tokenCost    Float @default(0.0)       // All cost is in USD
+  cacheStorageCost Float @default(0.0)
+
   createdAt     DateTime @default(now())
 
   @@index([taskKey])
@@ -163,7 +176,7 @@ model LLMCache {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   repoId String
-  repo Repo @relation(fields: [repoId], references:[github_repo_id], onDelete: Cascade)
+  repo Repo @relation(fields: [repoId], references: [id], onDelete: Cascade)
 
   taskKey String 
   commitSha String

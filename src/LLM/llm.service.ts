@@ -4,6 +4,7 @@ import { SUPPORTED_PROVIDERS, SupportedProviders, DocsAndPRSchema, docsAndPRSche
 import { JSON_ENFORCEMENT_PROMPT, DIFF_ENFORCEMENT_PROMPT } from "./llm.constants"
 import prisma from "../prisma/prisma";
 import { ScopedCacheService } from "./llm.cache.service";
+import { calculateGeminiCost } from './llm.helper';
 
 export class LLMService {
 
@@ -35,8 +36,25 @@ export class LLMService {
     durationMs: number,
     resultSummary?: string,
     error?: string,
-    jobId?: string
+    jobId?: string,
+    usage?: { promptTokens: number; cachedTokens: number; outputTokens: number; storageCostUsd?: number }
   ) {
+
+    let generationCostUsd = 0;
+    let storageCacheCostUsd = 0;
+
+    if (usage) {
+    // 1. Calculate compute/generation costs
+    generationCostUsd = await calculateGeminiCost(
+      modelName, 
+      usage.promptTokens, 
+      usage.cachedTokens, 
+      usage.outputTokens
+    );
+    
+    // 2. Extract storage costs (if this was a cache provision event)
+    storageCacheCostUsd = usage.storageCostUsd || 0;
+  }
     try {
       await prisma.lLMLog.create({
         data: {
@@ -48,6 +66,11 @@ export class LLMService {
           resultSummary: resultSummary ? resultSummary.substring(0, 500) : null,
           error: error ? error.substring(0, 500) : null,
           jobId,
+          tokenCost: generationCostUsd,
+          cacheStorageCost: storageCacheCostUsd,
+          promptTokens: usage?.promptTokens,
+          cachedTokens: usage?.cachedTokens,
+          outputTokens: usage?.outputTokens,
         },
       });
     } catch (err) {
@@ -58,14 +81,18 @@ export class LLMService {
   async evaluateDiffStructured(userPrompt: string, jobId?: string): Promise<DiffJudgeSchema> {
     const { provider, config, providerName } = await this.getProviderAndConfig("judge");
     const startTime = Date.now();
+    
     try {
-      const result = await provider.generateStructured<DiffJudgeSchema>(
+      const { data: result, usage } = await provider.generateStructured<DiffJudgeSchema>(
         userPrompt + "\n" + DIFF_ENFORCEMENT_PROMPT, 
         diffJudgeSchema, 
         config
       );
       const durationMs = Date.now() - startTime;
-      await this.recordLog("judge", providerName, config.model, "SUCCESS", durationMs, `Verdict: ${result.verdict} | Reasoning: ${result.reasoning}`, undefined, jobId);
+      await this.recordLog("judge", providerName, config.model, "SUCCESS", durationMs, `Verdict: ${result.verdict} | Reasoning: ${result.reasoning}`, undefined, jobId, usage);
+      
+      console.log("diff eval done, that costs ", usage);
+      
       return result;
     } catch (err: any) {
       const durationMs = Date.now() - startTime;
@@ -115,15 +142,16 @@ export class LLMService {
         cacheName: cacheName ?? undefined
       }
 
-      const result = await provider.generateStructured<DocsAndPRSchema>(
+      const { data: result, usage } = await provider.generateStructured<DocsAndPRSchema>(
         finalPrompt,
         docsAndPRSchema,
         runTimeConfig
       );
       
+      console.log("doc gen done, that costs ", usage);
       const durationMs = Date.now() - startTime;
       
-      await this.recordLog("tinyRepo", providerName, config.model, "SUCCESS", durationMs, `PR Title: ${result.prTitle}`, undefined, jobId);
+      await this.recordLog("tinyRepo", providerName, config.model, "SUCCESS", durationMs, `PR Title: ${result.prTitle}`, undefined, jobId, usage);
       return result;
     } 
     catch (err: any) {

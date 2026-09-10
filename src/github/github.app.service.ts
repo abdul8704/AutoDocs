@@ -170,7 +170,7 @@ export const importThisRepo = async (userId: string, githubRepoId: string, name:
 
   const publisherData: FirstTimeImportJobData = {
     docJobId: job.id,
-    repoId: githubRepoId,
+    repoId: importedRepo.id,
     userId,
     installationId: effectiveInstallationId,
     defaultBranch: "main",

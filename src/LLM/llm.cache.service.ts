@@ -5,7 +5,7 @@ import { env } from "../config/env";
 
 export class ScopedCacheService {
     private geminiAi: GoogleGenAI;
-    private DEFAULT_CACHE_TTL_SECONDS = 24 * 60 * 60;
+    private DEFAULT_CACHE_TTL_SECONDS = 60 * 60; // 1 hour cache
     constructor() {
         if (!env.GEMINI_API_KEY)
             throw new Error("Google gemini key not found");

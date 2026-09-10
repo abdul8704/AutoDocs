@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type, Schema as GeminiSchema } from "@google/genai";
 import { z } from "zod";
 import { BaseLLMProvider } from "./base.provider";
-import { LLMRuntimeConfig } from "../llm.types";
+import { LLMResponse, LLMRuntimeConfig } from "../llm.types";
 import { zodToGeminiSchema } from "../llm.helper";
 import { env } from "../../config/env"
 
@@ -16,7 +16,7 @@ export class GeminiProvider extends BaseLLMProvider {
     override async generateText(
         prompt: string,
         config: LLMRuntimeConfig,
-    ): Promise<string> {
+    ): Promise<LLMResponse<string>> {
         const response = await this.ai.models.generateContent({
             model: config.model!,
             contents: prompt,
@@ -28,14 +28,24 @@ export class GeminiProvider extends BaseLLMProvider {
             }
         });
 
-        return response.text || "";
+        const usage = {
+            promptTokens : response.usageMetadata?.promptTokenCount || 0,
+            cachedTokens: response.usageMetadata?.cachedContentTokenCount || 0,
+            outputTokens: response.usageMetadata?.candidatesTokenCount || 0,
+            totalTokens: response.usageMetadata?.totalTokenCount || 0,
+        }
+
+        return {
+            data: response.text || "",
+            usage
+        }
     }
 
     async generateStructured<T>(
         prompt: string,
         schema: z.ZodSchema<T>,
         config: LLMRuntimeConfig
-    ): Promise<T> {
+    ): Promise<LLMResponse<T>> {
 
         // 1. Convert Zod -> Gemini Schema format
         const geminiFormatSchema = zodToGeminiSchema(schema);
@@ -58,7 +68,18 @@ export class GeminiProvider extends BaseLLMProvider {
         if (!rawOutput)
             throw new Error("Gemini returned an empty structured response.");
 
-        // 3. Use the base class to parse and validate the raw text back into the Zod generic T
-        return this.parseJsonResponse<T>(rawOutput, schema);
+        const usage = {
+            promptTokens : response.usageMetadata?.promptTokenCount || 0,
+            cachedTokens: response.usageMetadata?.cachedContentTokenCount || 0,
+            outputTokens: response.usageMetadata?.candidatesTokenCount || 0,
+            totalTokens: response.usageMetadata?.totalTokenCount || 0,
+        }
+
+        const parsedData = this.parseJsonResponse<T>(rawOutput, schema);
+        
+        return {
+            data: parsedData,
+            usage: usage
+        }
     }
 }

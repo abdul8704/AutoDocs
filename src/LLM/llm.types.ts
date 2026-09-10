@@ -7,7 +7,15 @@ export interface LLMRuntimeConfig {
     maxOutputTokens?: number;
     cacheName?: string
 }
-
+export interface LLMResponse<T> {
+    data: T,
+    usage: {
+        promptTokens: number;
+        cachedTokens: number;
+        outputTokens: number;
+        totalTokens: number;
+    }
+}
 export interface CacheLookupParams {
   userId: string;
   repoId: string;
@@ -32,14 +40,14 @@ export interface TinyRepoPayload {
 
 export interface LLM_ProviderInterface {
     // the main method used to send prompts to llm, for human understable purpose
-    generateText(prompt: string, options?: LLMRuntimeConfig): Promise<string>;
+    generateText(prompt: string, options?: LLMRuntimeConfig): Promise<LLMResponse<string>>;
 
     // for structured output, T here signifies whatever json schema we need the response in
     generateStructured<T>(
         prompt: string,
         schema: z.ZodSchema<T>,
         options?: LLMRuntimeConfig
-    ): Promise<T>;
+    ): Promise<LLMResponse<T>>;
 }
 
 export const docsAndPRSchema = z.object({
