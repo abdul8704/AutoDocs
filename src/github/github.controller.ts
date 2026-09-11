@@ -7,8 +7,11 @@ import { verifyAccessToken } from "../auth/jwt.service";
 import crypto from "crypto";
 import { env } from "../config/env"
 import { HttpError } from "../utils/httpError.utils";
+import { BillingService } from "../billing/billing.service";
+import prisma from "../prisma/prisma";
 
 const WEBHOOK_SECRET = env.GITHUB_WEBHOOK_SECRET;
+const DEFAULT_SIGNUP_GRANT = 20;
 
 export const githubHandler = async (req: Request, res: Response) => {
     console.log("Webhook recieved");
@@ -30,6 +33,11 @@ export const githubHandler = async (req: Request, res: Response) => {
 
     const event = req.headers["x-github-event"];
     const payload = req.body;
+
+    if (payload.action === "closed" && payload.pull_request.merged) {
+        await githubService.evictAllCaches(payload);
+        return res.status(200).json({ success: true, message: "It works " });
+    }
 
     if (event !== "push") // dont bother about anything other than push event
         return res.status(200)
@@ -56,6 +64,15 @@ export const handleSetupCallback = async (req: Request, res: Response) => {
     try {
         const { userId } = verifyAccessToken(state);
         await githubAppService.saveInstallationId(userId, installationId);
+        const user = await prisma.user.findUnique({
+            where: {
+                id: userId
+            }
+        })
+        if (user && user.githubId) {
+            await BillingService.checkAndGiveSignupGrant(userId, user.githubId, DEFAULT_SIGNUP_GRANT);
+            console.log("singup grant given for ", user.name, user.githubId);
+        }
     } catch (err) {
         console.error("GitHub App setup callback failed:", err);
         return res.redirect(`${env.CLIENT_URL}/dashboard?github_error=invalid_state`);
@@ -88,7 +105,7 @@ export const importRepo = async (req: Request, res: Response) => {
     const instId = installation_id ?? installationId;
     const parsedInstId = instId !== undefined && instId !== null ? Number(instId) : undefined;
     try {
-        const importedRepo = await githubAppService.importThisRepo(userId, githubRepoId, name, cloneUrl, parsedInstId)
+        const importedRepo = await githubAppService.importThisRepo(userId, githubRepoId, name, cloneUrl, parsedInstId);
         res.status(201).json({ success: true, importedRepo });
     } catch (err: any) {
         if (err instanceof HttpError) {

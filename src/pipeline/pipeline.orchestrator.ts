@@ -88,6 +88,8 @@ export const generateFirstTimeDocs = async (
             }
         });
 
+
+
         return prLink;
     }
 }
@@ -132,7 +134,7 @@ export const handleWebhooks = async (
 
     await updateJobStatus(jobId, "WAITING_LLM_JUDGE")
 
-    const llmDecision = await llmJudge(docFiles, diff, repoPath, llmService);
+    const llmDecision = await llmJudge(userId, jobId, docFiles, diff, repoPath, llmService);
     console.log("LLM Decision: ", llmDecision);
 
     if (!llmDecision.verdict) {

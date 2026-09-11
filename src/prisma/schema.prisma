@@ -30,9 +30,11 @@ model User {
   refresh_sessions RefreshSession[]
   repos            Repo[]
 
-  planType      String   @default("FREE")
-  usedDocsQuota Int      @default(0)
+  planType       String          @default("FREE")
   llmCache       LLMCache[]
+  creditBalance  CreditBalance?
+  creditRequests CreditRequest[]
+  creditLedger   CreditLedger[]
 }
 
 model RefreshSession {
@@ -50,120 +52,126 @@ model RefreshSession {
 }
 
 model Repo {
-  id                    String   @id @default(uuid())
-  user_id               String
-  github_repo_id        String   @unique
-  full_name             String?
-  
+  id             String  @id @default(uuid())
+  user_id        String
+  github_repo_id String  @unique
+  full_name      String?
+
   installation_id       Int
   clone_url             String
   last_processed_commit String?
 
-  jobs                  DocsUpdateJob[]
+  jobs DocsUpdateJob[]
 
-  created_at            DateTime @default(now())
-  updated_at            DateTime @updatedAt
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
   user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
-  llmCache       LLMCache[]
-
+  llmCache LLMCache[]
 }
 
 model LLMTaskConfig {
-  id                String   @id @default(uuid())
-  taskKey           String   @unique // e.g., 'tinyRepo', 'judge'
-  modelRosterId     String 
-  model             ModelRoster   @relation(fields: [modelRosterId], references: [id], onDelete: Restrict)
+  id            String      @id @default(uuid())
+  taskKey       String      @unique // e.g., 'tinyRepo', 'judge'
+  modelRosterId String
+  model         ModelRoster @relation(fields: [modelRosterId], references: [id], onDelete: Restrict)
 
-  promptId          String
-  prompt            Prompt   @relation(fields: [promptId], references: [id], onDelete: Restrict)
-  temperature       Float    @default(0.2)
-  maxOutputTokens   Int?
-  updatedAt         DateTime @updatedAt
+  promptId        String
+  prompt          Prompt   @relation(fields: [promptId], references: [id], onDelete: Restrict)
+  temperature     Float    @default(0.2)
+  maxOutputTokens Int?
+  updatedAt       DateTime @updatedAt
 }
 
 model Prompt {
-  id            String   @id @default(uuid())
-  prompt_key    String  
-  version       String
-  content       String
-  
-  taskConfigs  LLMTaskConfig[]
+  id         String @id @default(uuid())
+  prompt_key String
+  version    String
+  content    String
+
+  taskConfigs LLMTaskConfig[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
-model ModelRoster{
-  id String   @id @default(uuid())
-  modelName String
-  provider String 
-  contextWindow Int? @default(1048576) // 1 million context window
-  taskConfigs  LLMTaskConfig[]
+model ModelRoster {
+  id            String          @id @default(uuid())
+  modelName     String
+  provider      String
+  contextWindow Int?            @default(1048576) // 1 million context window
+  taskConfigs   LLMTaskConfig[]
 
   //USD per million tokens
-  inputPrice Float @default(0.0)
-  cachedPrice Float @default(0.0)
+  inputPrice  Float @default(0.0)
+  cacheRead   Float @default(0.0)
+  cacheWrite  Float @default(0.0)
   outputPrice Float @default(0.0)
-  
-  @@unique([ modelName, provider ])
+
+  @@unique([modelName, provider])
 }
 
-model DocsUpdateJob{
+// when u expand to complex pipeline for big repo, include taskKey in this table
+model DocsUpdateJob {
   id String @id @default(uuid())
 
-  repoId String
-  repository    Repo  @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  repoId     String
+  repository Repo   @relation(fields: [repoId], references: [id], onDelete: Cascade)
 
-  triggerCommit String? @default("") // the SHA of commit which we are working on  
-  status JobStatus      @default(PENDING)
+  triggerCommit String?   @default("") // the SHA of commit which we are working on  
+  status        JobStatus @default(PENDING)
 
-  pullRequestId      Int?
-  branchName         String?
+  pullRequestId Int?
+  branchName    String?
 
-  prLink   String?
+  prLink String?
 
-  errorLog           String?
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
+  errorLog      String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  creditLedgers CreditLedger[]
 }
 
 enum JobStatus {
-  PENDING       // Webhook received, sitting in queue
-  CLONING       // Cloning the repo
-  SCANING       // preprocessing before sending to LLM
-  GENERATING    // LLM is currently processing the diff
-  PR_OPEN       // Generation successful, PR is waiting for user review
-  COMPLETED     // User merged the PR
-  FAILED        // Something crashed
+  PENDING // Webhook received, sitting in queue
+  INSUFFICIENT_CREDITS // Flagged when user balance is below threshold
+  CLONING // Cloning the repo
+  SCANING // preprocessing before sending to LLM
+  GENERATING // LLM is currently processing the diff
+  PR_OPEN // Generation successful, PR is waiting for user review
+  COMPLETED // User merged the PR
+  FAILED // Something crashed
 
   WAITING_LLM_JUDGE // for webhook requests
   LLM_JUDGE_REJECTED // LLM rejected the diff
   DROPPED // Diff not relevant for docs update
+
+  MERGED
 }
 
 model LLMLog {
-  id            String   @id @default(uuid())
-  jobId         String?  
-  taskKey       String   
-  provider      String   
-  modelName     String   
-  status        String   
-  durationMs    Int      
+  id         String  @id @default(uuid())
+  jobId      String?
+  taskKey    String
+  provider   String
+  modelName  String
+  status     String
+  durationMs Int
 
-  error         String?  
-  resultSummary String?  
+  error         String?
+  resultSummary String?
 
-  promptTokens        Int      @default(0)
-  cachedTokens        Int      @default(0)
-  inputTokens         Int      @default(0)
-  outputTokens        Int      @default(0)
+  promptTokens Int @default(0)
+  cachedTokens Int @default(0)
+  inputTokens  Int @default(0)
+  outputTokens Int @default(0)
 
-  tokenCost    Float @default(0.0)       // All cost is in USD
+  tokenCost        Float @default(0.0) // All cost is in USD
   cacheStorageCost Float @default(0.0)
+  savedCost        Float @default(0.0)
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([taskKey])
   @@index([createdAt])
@@ -173,21 +181,75 @@ model LLMCache {
   id String @id @default(uuid())
 
   userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   repoId String
-  repo Repo @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  repo   Repo   @relation(fields: [repoId], references: [id], onDelete: Cascade)
 
-  taskKey String 
+  taskKey   String
   commitSha String
 
   cacheName String
   model     String
-  
+
   expiresAt DateTime
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([userId, repoId, taskKey])
+}
+
+model SignupGrantClaim {
+  id        String   @id @default(uuid())
+  githubId  String   @unique // The only constraint needed
+  claimedAt DateTime @default(now())
+}
+
+model CreditBalance {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+  balance   Int      @default(0)
+  updatedAt DateTime @updatedAt
+}
+
+model CreditLedger {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  amount      Int // Positive for grants/top-ups, negative for usage
+  type        LedgerType
+  jobId       String?
+  job         DocsUpdateJob? @relation(fields: [jobId], references: [id])
+  description String
+  createdAt   DateTime       @default(now())
+
+  @@index([userId])
+}
+
+model CreditRequest {
+  id              String        @id @default(uuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id])
+  amountRequested Int           @default(10)
+  amountGranted   Int?          
+  userReason          String?
+  adminReason         String?
+  status          RequestStatus @default(PENDING)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+enum LedgerType {
+  SIGNUP_GRANT
+  USAGE_DEDUCTION
+  ADMIN_TOP_UP
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }

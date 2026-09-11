@@ -26,12 +26,23 @@ export function zodToGeminiSchema(zodSchema: z.ZodTypeAny) {
   return cleanSchema(jsonSchema);
 }
 
-export async function calculateGeminiCost(
+export interface CostCalculationResult {
+  tokenCost: number;       // total generation cost (uncached input + cache read + output)
+  cacheWriteCost: number;  // cost spent writing to cache
+  savedCost: number;       // cost saved by reading from cache instead of uncached input
+  inputCost: number;       // cost for uncached input tokens
+  cacheReadCost: number;   // cost for cached input tokens read
+  outputCost: number;      // cost for output tokens
+  inputTokens: number;     // uncached prompt tokens (promptTokens - cachedTokens)
+}
+
+export async function calculateCost(
   modelName: string, 
   promptTokens: number, 
   cachedTokens: number, 
-  outputTokens: number
-): Promise<number> {
+  outputTokens: number,
+  cacheWriteTokens: number = 0
+): Promise<CostCalculationResult> {
   
   const modelCost = await prisma.modelRoster.findFirst({
     where: { modelName: modelName }
@@ -39,13 +50,40 @@ export async function calculateGeminiCost(
   if (!modelCost) {
     throw new Error(`Model ${modelName} not found in roster`);
   }
-  let inputRate = modelCost.inputPrice; 
-  let cachedRate = modelCost.cachedPrice; 
-  let outputRate = modelCost.outputPrice; 
 
-  const inputCost = (promptTokens / 1_000_000) * inputRate;
-  const cachedCost = (cachedTokens / 1_000_000) * cachedRate;
+  const inputRate = modelCost.inputPrice; 
+  const cacheReadRate = modelCost.cacheRead; 
+  const cacheWriteRate = modelCost.cacheWrite; 
+  const outputRate = modelCost.outputPrice; 
+
+  const inputTokens = Math.max(0, promptTokens - cachedTokens);
+
+  const inputCost = (inputTokens / 1_000_000) * inputRate;
+  const cacheReadCost = (cachedTokens / 1_000_000) * cacheReadRate;
+  const cacheWriteCost = (cacheWriteTokens / 1_000_000) * cacheWriteRate;
   const outputCost = (outputTokens / 1_000_000) * outputRate;
 
-  return inputCost + cachedCost + outputCost;
+  const tokenCost = inputCost + cacheReadCost + outputCost;
+  // Saved cost = difference between what cached tokens would have cost at uncached rate vs cache read rate
+  const savedCost = Math.max(0, (cachedTokens / 1_000_000) * (inputRate - cacheReadRate));
+
+  return {
+    tokenCost,
+    cacheWriteCost,
+    savedCost,
+    inputCost,
+    cacheReadCost,
+    outputCost,
+    inputTokens
+  };
+}
+
+export async function calculateGeminiCost(
+  modelName: string, 
+  promptTokens: number, 
+  cachedTokens: number, 
+  outputTokens: number
+): Promise<number> {
+  const result = await calculateCost(modelName, promptTokens, cachedTokens, outputTokens);
+  return result.tokenCost;
 }

@@ -54,12 +54,22 @@ export const docsAndPRSchema = z.object({
     prTitle: z.string(),
     prBody: z.string(),
     commitMessage: z.string(),
-    documentation: z.string()
+    documentation: z.string(),
+    inputToken: z.number(),
+    outputToken: z.number(),
+    cachedToken: z.number(),
+    cacheWriteTokens: z.number(),
+    totalToken: z.number(),
 })
 
 export const diffJudgeSchema = z.object({
     verdict: z.boolean(),
-    reasoning: z.string()
+    reasoning: z.string(),
+    inputToken: z.number(),
+    outputToken: z.number(),
+    cachedToken: z.number(),
+    cacheWriteTokens: z.number(),
+    totalToken: z.number(),
 });
 
 export type DocsAndPRSchema = z.infer<typeof docsAndPRSchema>;

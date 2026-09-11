@@ -6,6 +6,7 @@ import { GitAllRepoResponse, ImportedRepoResponse, InstallationStatusResponse } 
 import { HttpError } from "../utils/httpError.utils";
 import { publishFirstTimeImport } from "../queue/publishers"
 import { FirstTimeImportJobData } from "../queue/types.queue";
+import { BillingService } from "../billing/billing.service";
 
 const APP_ID = env.GITHUB_APP_ID
 const PRIVATE_KEY = env.GITHUB_APP_PRIVATE_KEY.replace(/\\n/g, "\n");
@@ -161,24 +162,32 @@ export const importThisRepo = async (userId: string, githubRepoId: string, name:
     },
   });
 
+  const hasSufficientCredits = await BillingService.hasSufficientBalance(userId, 10);
+  const status = hasSufficientCredits ? "PENDING" : "INSUFFICIENT_CREDITS";
+  const errorLog = hasSufficientCredits ? null : "Insufficient credits for initial import. Request paused until user manually retries.";
+
   const job = await prisma.docsUpdateJob.create({
     data: {
       repoId: importedRepo.id,
-      status: "PENDING",
+      status,
+      errorLog,
     }
   });
 
-  const publisherData: FirstTimeImportJobData = {
-    docJobId: job.id,
-    repoId: importedRepo.id,
-    userId,
-    installationId: effectiveInstallationId,
-    defaultBranch: "main",
-    githubUrl: await getAuthenticatedRepoUrl(cloneUrl, effectiveInstallationId),
-    //      customPrompt // TODO
+  if (hasSufficientCredits) {
+    const publisherData: FirstTimeImportJobData = {
+      docJobId: job.id,
+      repoId: importedRepo.id,
+      userId,
+      installationId: effectiveInstallationId,
+      defaultBranch: "main",
+      githubUrl: await getAuthenticatedRepoUrl(cloneUrl, effectiveInstallationId),
+    };
+    console.log("about to publish first time import");
+    await publishFirstTimeImport(publisherData);
+  } else {
+    console.log(`[Import] User ${userId} has insufficient credits (< 10). Job ${job.id} created with INSUFFICIENT_CREDITS status.`);
   }
-  console.log("about to publish")
-  await publishFirstTimeImport(publisherData)
 
   return importedRepo;
 }

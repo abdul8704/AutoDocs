@@ -19,4 +19,4 @@ export interface DiffSummary {
   }];
 }
 
-export type JobStatus = "PENDING" | "CLONING" | "SCANING" | "GENERATING" | "PR_OPEN" | "COMPLETED" | "FAILED" | "WAITING_LLM_JUDGE" | "LLM_JUDGE_REJECTED" | "DROPPED";
+export type JobStatus = "PENDING" | "INSUFFICIENT_CREDITS" | "CLONING" | "SCANING" | "GENERATING" | "PR_OPEN" | "COMPLETED" | "FAILED" | "WAITING_LLM_JUDGE" | "LLM_JUDGE_REJECTED" | "DROPPED" | "MERGED";

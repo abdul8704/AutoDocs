@@ -1,12 +1,24 @@
 import prisma from "../../prisma/prisma"
 
 
-export const addNewModel = async (modelName: string, provider: string, contextWindow: number) => {
+export const addNewModel = async (
+    modelName: string, 
+    provider: string, 
+    contextWindow: number, 
+    inputCost: number, 
+    outputCost: number, 
+    cacheRead: number,
+    cacheWrite: number
+) => {
     const model = await prisma.modelRoster.create({
         data: {
             modelName,
             provider,
-            contextWindow
+            contextWindow,
+            inputPrice: inputCost,
+            outputPrice: outputCost,
+            cacheRead,
+            cacheWrite
         }
     })
     return model;
@@ -26,7 +38,16 @@ export const deleteModel = async (id: string) => {
     return model;
 }
 
-export const updateModel = async (id: string, modelName: string, provider: string, contextWindow: number) => {
+export const updateModel = async (
+    id: string, 
+    modelName: string, 
+    provider: string, 
+    contextWindow: number,
+    inputCost?: number,
+    outputCost?: number,
+    cacheRead?: number,
+    cacheWrite?: number
+) => {
     await prisma.modelRoster.update({
         where: {
             id
@@ -34,7 +55,11 @@ export const updateModel = async (id: string, modelName: string, provider: strin
         data: {
             modelName,
             provider,
-            contextWindow
+            contextWindow,
+            ...(inputCost !== undefined && { inputPrice: inputCost }),
+            ...(outputCost !== undefined && { outputPrice: outputCost }),
+            ...(cacheRead !== undefined && { cacheRead }),
+            ...(cacheWrite !== undefined && { cacheWrite }),
         }
     })
 }

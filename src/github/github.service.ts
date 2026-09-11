@@ -9,6 +9,8 @@ import * as githubAppService from "./github.app.service"
 import { publishCleanup, publishDeepCloneForPush, publishPushForClassification, removeJobsForRepo } from "../queue/publishers"
 import { CleanupJobData, DeepClonePushJobData, FirstTimeImportJobData, PushClassifyJobData } from "../queue/types.queue";
 import path from "path";
+import { ScopedCacheService } from "../LLM/llm.cache.service";
+import { BillingService } from "../billing/billing.service";
 
 export interface PRPayload {
     repoOwner: string;
@@ -92,6 +94,48 @@ export const checkIfRepoExists = async (pathOrRepoId: string): Promise<boolean> 
         throw err;
     }
 }
+export const evictAllCaches = async (payload: any) => {
+    const prNumber = payload.pull_request?.number;
+    const githubRepoId = payload.repository?.id?.toString();
+
+    if (prNumber) {
+        const latestPR = await prisma.docsUpdateJob.findFirst({
+            where: {
+                pullRequestId: prNumber,
+            },
+            orderBy: {
+                createdAt: "desc"
+            }
+        });
+
+        if (latestPR && latestPR.status === "PR_OPEN") {
+            await prisma.docsUpdateJob.update({
+                where: {
+                    id: latestPR.id,
+                },
+                data: {
+                    status: "MERGED",
+                }
+            });
+        }
+    }
+
+    if (githubRepoId) {
+        const cache = new ScopedCacheService();
+        const repo = await prisma.repo.findUnique({
+            where: {
+                github_repo_id: githubRepoId
+            },
+            include: {
+                user: true
+            }
+        });
+
+        if (repo) {
+            await cache.evictCache(repo.user.id, repo.id, "tinyRepo");
+        }
+    }
+};
 
 export const githubWebhookHandlerService = async (payload: any) => {
     // check if repo id is there in db
@@ -113,34 +157,40 @@ export const githubWebhookHandlerService = async (payload: any) => {
             return;
         }
 
-        // TODO: FUTURE PRICING CHECK (SEAMLESS INTEGRATION) ---
-        // if (importedRepo.user.usedDocsQuota >= 15 && importedRepo.user.planType === 'FREE') {
-        //    return res.status(200).send("Quota exceeded");
-        // }
+        const hasSufficientCredits = await BillingService.hasSufficientBalance(importedRepo.user.id, 10);
+
+        const status = hasSufficientCredits ? "PENDING" : "INSUFFICIENT_CREDITS";
+        const errorLog = hasSufficientCredits ? null : "Insufficient credits (< 10 credits). Request paused until user manually retries.";
 
         const job = await prisma.docsUpdateJob.create({
             data: {
                 repoId: importedRepo.id,
-                status: "PENDING",
+                status,
+                triggerCommit: payload.after,
+                errorLog,
             }
         });
-        console.log("Starting webhok job")
+        console.log("Starting webhook job", job.id);
 
-        console.log(`🚀 Triggering doc update for imported repo: ${importedRepo.user.name}`);
-        console.log(`Commit hash: ${payload.after}`);
+        if (hasSufficientCredits) {
+            console.log(`🚀 Triggering doc update for imported repo: ${importedRepo.user.name}`);
+            console.log(`Commit hash: ${payload.after}`);
 
-        const workerObject: PushClassifyJobData = {
-            docJobId: job.id,
-            ref: payload.ref,
-            repoId: importedRepo.id,
-            installationId: importedRepo.installation_id,
-            afterSha: payload.after,
-            beforeSha: payload.before,
-            defaultBranch: "main",
-            userId: importedRepo.user.id,
+            const workerObject: PushClassifyJobData = {
+                docJobId: job.id,
+                ref: payload.ref,
+                repoId: importedRepo.id,
+                installationId: importedRepo.installation_id,
+                afterSha: payload.after,
+                beforeSha: payload.before,
+                defaultBranch: "main",
+                userId: importedRepo.user.id,
+            };
+
+            await publishPushForClassification(workerObject);
+        } else {
+            console.log(`[Webhook] User ${importedRepo.user.id} has insufficient credits (< 10). Job ${job.id} created with INSUFFICIENT_CREDITS status.`);
         }
-
-        await publishPushForClassification(workerObject);
     }
 }
 

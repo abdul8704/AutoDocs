@@ -7,6 +7,8 @@ import * as path from "path";
 import { SimpleGit } from "simple-git";
 
 export const llmJudge = async (
+    userId: string,
+    jobId: string,
     docFiles: FileRecord[],
     diff: string,
     repoPath: string,
@@ -20,7 +22,7 @@ export const llmJudge = async (
     Diff \n
     ${diff}`
 
-    const llmVerdict: DiffJudgeSchema = await llmService.evaluateDiffStructured(prompt);
+    const llmVerdict: DiffJudgeSchema = await llmService.evaluateDiffStructured(userId, prompt, jobId);
     console.log("[PIPELINE] Verdict generated successfully");
     console.log(llmVerdict);
     return llmVerdict;

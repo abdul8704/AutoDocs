@@ -4,7 +4,8 @@ import { SUPPORTED_PROVIDERS, SupportedProviders, DocsAndPRSchema, docsAndPRSche
 import { JSON_ENFORCEMENT_PROMPT, DIFF_ENFORCEMENT_PROMPT } from "./llm.constants"
 import prisma from "../prisma/prisma";
 import { ScopedCacheService } from "./llm.cache.service";
-import { calculateGeminiCost } from './llm.helper';
+import { calculateCost } from './llm.helper';
+import { BillingService } from '../billing/billing.service';
 
 export class LLMService {
 
@@ -29,32 +30,49 @@ export class LLMService {
   }
 
   private async recordLog(
+    userId: string,
     taskKey: string,
     provider: string,
     modelName: string,
     status: "SUCCESS" | "FAILED",
     durationMs: number,
+    jobId: string,
     resultSummary?: string,
     error?: string,
-    jobId?: string,
-    usage?: { promptTokens: number; cachedTokens: number; outputTokens: number; storageCostUsd?: number }
+    usage?: { promptTokens: number; cachedTokens: number; outputTokens: number; cacheWriteTokens?: number; storageCostUsd?: number }
   ) {
 
     let generationCostUsd = 0;
     let storageCacheCostUsd = 0;
+    let savedCostUsd = 0;
+    let inputTokensCount = 0;
 
     if (usage) {
-    // 1. Calculate compute/generation costs
-    generationCostUsd = await calculateGeminiCost(
-      modelName, 
-      usage.promptTokens, 
-      usage.cachedTokens, 
-      usage.outputTokens
-    );
-    
-    // 2. Extract storage costs (if this was a cache provision event)
-    storageCacheCostUsd = usage.storageCostUsd || 0;
-  }
+      // Calculate compute, cache write, and saved costs using calculateCost
+      const costResult = await calculateCost(
+        modelName, 
+        usage.promptTokens, 
+        usage.cachedTokens, 
+        usage.outputTokens,
+        usage.cacheWriteTokens || 0
+      );
+
+      generationCostUsd = costResult.tokenCost;
+      storageCacheCostUsd = costResult.cacheWriteCost || usage.storageCostUsd || 0;
+      savedCostUsd = costResult.savedCost;
+      inputTokensCount = costResult.inputTokens;
+      
+      const totalProviderCostUsd = generationCostUsd + storageCacheCostUsd;
+      const creditAmount = BillingService.providerCostToCredits(totalProviderCostUsd);
+      console.log("deducting credits ", creditAmount, " for user ", userId, " for task ", taskKey);
+      
+      try {
+        await BillingService.deductCredit(userId, creditAmount, jobId, "Deducted for " + taskKey + " on " + new Date().toISOString());
+      } catch (billingErr) {
+        console.error("[LLMService] Failed to deduct credits:", billingErr);
+      }
+    }
+
     try {
       await prisma.lLMLog.create({
         data: {
@@ -68,9 +86,11 @@ export class LLMService {
           jobId,
           tokenCost: generationCostUsd,
           cacheStorageCost: storageCacheCostUsd,
-          promptTokens: usage?.promptTokens,
-          cachedTokens: usage?.cachedTokens,
-          outputTokens: usage?.outputTokens,
+          savedCost: savedCostUsd,
+          promptTokens: usage?.promptTokens || 0,
+          cachedTokens: usage?.cachedTokens || 0,
+          inputTokens: inputTokensCount,
+          outputTokens: usage?.outputTokens || 0,
         },
       });
     } catch (err) {
@@ -78,7 +98,7 @@ export class LLMService {
     }
   }
 
-  async evaluateDiffStructured(userPrompt: string, jobId?: string): Promise<DiffJudgeSchema> {
+  async evaluateDiffStructured(userId: string, userPrompt: string, jobId: string): Promise<DiffJudgeSchema> {
     const { provider, config, providerName } = await this.getProviderAndConfig("judge");
     const startTime = Date.now();
     
@@ -88,15 +108,22 @@ export class LLMService {
         diffJudgeSchema, 
         config
       );
+
       const durationMs = Date.now() - startTime;
-      await this.recordLog("judge", providerName, config.model, "SUCCESS", durationMs, `Verdict: ${result.verdict} | Reasoning: ${result.reasoning}`, undefined, jobId, usage);
+      
+      const combinedUsage = usage ? {
+        ...usage,
+        cacheWriteTokens: 0      // we dont write cache for diff judge
+      } : undefined;
+
+      await this.recordLog(userId, "judge", providerName, config.model, "SUCCESS", durationMs, jobId, `Verdict: ${result.verdict} | Reasoning: ${result.reasoning}`, undefined, combinedUsage);
       
       console.log("diff eval done, that costs ", usage);
-      
+
       return result;
     } catch (err: any) {
       const durationMs = Date.now() - startTime;
-      await this.recordLog("judge", providerName, config.model, "FAILED", durationMs, undefined, err?.message || String(err), jobId);
+      await this.recordLog(userId, "judge", providerName, config.model, "FAILED", durationMs, jobId, undefined, err?.message || String(err));
       throw err;
     }
   }
@@ -116,7 +143,7 @@ export class LLMService {
     const cacheService = new ScopedCacheService();
     
     try {
-      const cacheName = await cacheService.createOrGetCache({
+      const { cacheName, cacheWriteTokens } = await cacheService.createOrGetCache({
         userId: payload.userId,
         repoId: payload.repoId,
         taskKey: "tinyRepo",
@@ -148,15 +175,29 @@ export class LLMService {
         runTimeConfig
       );
       
-      console.log("doc gen done, that costs ", usage);
+      const combinedUsage = usage ? {
+        ...usage,
+        cacheWriteTokens: cacheWriteTokens || 0
+      } : undefined;
+
+      console.log("doc gen done, that costs ", combinedUsage);
       const durationMs = Date.now() - startTime;
       
-      await this.recordLog("tinyRepo", providerName, config.model, "SUCCESS", durationMs, `PR Title: ${result.prTitle}`, undefined, jobId, usage);
-      return result;
+      await this.recordLog(payload.userId, "tinyRepo", providerName, config.model, "SUCCESS", durationMs, jobId, `PR Title: ${result.prTitle}`, undefined, combinedUsage);
+      
+      const res: DocsAndPRSchema = {
+        ...result,
+        inputToken: combinedUsage?.promptTokens || 0,
+        outputToken: combinedUsage?.outputTokens || 0,
+        cachedToken: combinedUsage?.cachedTokens || 0,
+        cacheWriteTokens: combinedUsage?.cacheWriteTokens || 0,
+        totalToken: combinedUsage?.totalTokens || 0
+      }
+      return res;
     } 
     catch (err: any) {
       const durationMs = Date.now() - startTime;
-      await this.recordLog("tinyRepo", providerName, config.model, "FAILED", durationMs, undefined, err?.message || String(err), jobId);
+      await this.recordLog(payload.userId, "tinyRepo", providerName, config.model, "FAILED", durationMs, jobId, undefined, err?.message || String(err));
       throw err;
     }
   }

@@ -4,13 +4,29 @@ import { JobStatus } from "../pipeline/pipeline.types";
 
 export const getJobsController = async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
-    const { repoId, status, page, limit } = req.query;
+    const { repoId, status, page, limit, offset } = req.query;
 
     const result = await jobsService.getJobsForUser(userId, {
         repoId: typeof repoId === "string" ? repoId : undefined,
         status: typeof status === "string" ? (status as JobStatus) : undefined,
         page: page ? parseInt(String(page), 10) : undefined,
         limit: limit ? parseInt(String(limit), 10) : undefined,
+        offset: offset !== undefined ? parseInt(String(offset), 10) : undefined,
+    });
+
+    res.status(200).json({ success: true, ...result });
+};
+
+export const getJobsByUserIdController = async (req: Request, res: Response) => {
+    const targetUserId = req.params.userId || (req as any).user.id;
+    const { repoId, status, page, limit, offset } = req.query;
+
+    const result = await jobsService.getJobsForUser(targetUserId, {
+        repoId: typeof repoId === "string" ? repoId : undefined,
+        status: typeof status === "string" ? (status as JobStatus) : undefined,
+        page: page ? parseInt(String(page), 10) : undefined,
+        limit: limit ? parseInt(String(limit), 10) : undefined,
+        offset: offset !== undefined ? parseInt(String(offset), 10) : undefined,
     });
 
     res.status(200).json({ success: true, ...result });

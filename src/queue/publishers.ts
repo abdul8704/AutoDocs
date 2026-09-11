@@ -100,9 +100,10 @@ export const publishCleanup = async (data: CleanupJobData) => {
  * Target: classifyQueue ('classify-push')
  */
 export const publishPushForClassification = async (
-  data: PushClassifyJobData
+  data: PushClassifyJobData,
+  delayMs?: number
 ) => {
-  const jobId = `push-classify-${data.repoId}-${data.defaultBranch}`;
+  const jobId = `push-classify-${data.repoId}-${data.docJobId}`;
 
   // Debouncing: Check if a delayed job is already waiting in queue
   const existingJob = await classifyQueue.getJob(jobId);
@@ -111,8 +112,8 @@ export const publishPushForClassification = async (
   }
 
   return await classifyQueue.add("push-classify-queue", data, {
-    jobId
-    // delay: 10 * 60 * 1000, // 10-Minute Debounce Delay
+    jobId,
+    ...(delayMs ? { delay: delayMs } : {}),
   });
 };
 

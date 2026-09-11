@@ -12,14 +12,14 @@ export class ScopedCacheService {
         this.geminiAi = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
     }
 
-    async createOrGetCache(params: CacheLookupParams) {
+    async createOrGetCache(params: CacheLookupParams): Promise<{ cacheName: string | null; isNew: boolean; cacheWriteTokens: number }> {
         if (params.taskKey === 'judge') {
-            return null;
+            return { cacheName: null, isNew: false, cacheWriteTokens: 0 };
         }
 
         // OpenAI and Anthropic handle caching natively within their generation payloads.
         if (params.providerName === 'openai' || params.providerName === 'anthropic') {
-            return null;
+            return { cacheName: null, isNew: false, cacheWriteTokens: 0 };
         }
 
         const existingCache = await prisma.lLMCache.findUnique({
@@ -34,9 +34,9 @@ export class ScopedCacheService {
 
         const { exists, key } = await this.checkIfCacheValid(params.userId, params.repoId, params.taskKey, params.currentCommitSha, params.model );
 
-        if(exists)
-            return key;
-        else if(existingCache){
+        if (exists) {
+            return { cacheName: key, isNew: false, cacheWriteTokens: 0 };
+        } else if (existingCache) {
             await this.safeDeleteCache(existingCache.cacheName);
             await prisma.lLMCache.delete({ where: { id: existingCache.id } });
         }
@@ -66,6 +66,22 @@ export class ScopedCacheService {
                 throw new Error("Failed to create Gemini cache: missing cache name in response");
             }
 
+            let cacheWriteTokens = 0;
+            try {
+                const countRes = await this.geminiAi.models.countTokens({
+                    model: params.model,
+                    contents: [
+                        {
+                            role: 'user',
+                            parts: [{ text: (params.systemInstruction || "") + "\n" + params.promptPrefix }]
+                        }
+                    ]
+                });
+                cacheWriteTokens = countRes.totalTokens || 0;
+            } catch {
+                cacheWriteTokens = Math.ceil(((params.systemInstruction || "").length + params.promptPrefix.length) / 4);
+            }
+
             const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
 
             await prisma.lLMCache.create({
@@ -79,7 +95,7 @@ export class ScopedCacheService {
                     expiresAt: expiresAt,
                 }
             });
-            return geminiCache.name;
+            return { cacheName: geminiCache.name, isNew: true, cacheWriteTokens };
         }
         else
             throw new Error("No cache found for this provider");

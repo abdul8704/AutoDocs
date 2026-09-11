@@ -9,6 +9,9 @@ import { rm } from "fs";
 import { updateJobStatus } from "../pipeline/pipeline.helper";
 import { getAuthenticatedRepoUrl } from "../github/github.app.service";
 
+import { BillingService } from "../billing/billing.service";
+import { publishPushForClassification } from "../queue/publishers";
+
 export const webhookWorker = new Worker<PushClassifyJobData>(
     'push-classify-queue',
     async (job: Job<PushClassifyJobData>) => {
@@ -27,6 +30,20 @@ export const webhookWorker = new Worker<PushClassifyJobData>(
         const repoPath = constructPath(job.data.repoId);
         const jobId = job.data.docJobId;
         const authenticatedCloneUrl =  await getAuthenticatedRepoUrl(repoData.clone_url, repoData.installation_id);
+
+        const hasSufficientCredits = await BillingService.hasSufficientBalance(job.data.userId, 10);
+        if (!hasSufficientCredits) {
+            console.log(`[WebhookWorker] User ${job.data.userId} has insufficient credits (< 10). Re-queueing job ${jobId} with 1-hour delay.`);
+            await prisma.docsUpdateJob.update({
+                where: { id: jobId },
+                data: {
+                    status: "PENDING",
+                    errorLog: "Insufficient credits (< 10 credits). Re-queued for 1-hour delay.",
+                }
+            });
+            await publishPushForClassification(job.data, 60 * 60 * 1000);
+            return;
+        }
 
         try {
             if (await checkIfRepoExists(repoPath)) {
@@ -50,6 +67,13 @@ export const webhookWorker = new Worker<PushClassifyJobData>(
             if(!regenerated) {
                 return;
             }
+
+            await BillingService.deductCredit(
+                job.data.userId,
+                10,
+                jobId,
+                `Docs update generation for commit ${job.data.afterSha}`
+            );
 
             console.log("[Webhook worker] docs regenerated successfully, check out at ", prLink);
 

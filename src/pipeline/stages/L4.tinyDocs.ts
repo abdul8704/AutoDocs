@@ -50,8 +50,5 @@ export const generateDocsTinyRepo = async (
         promptSuffix: promptSuffix ?? ""
     };
 
-    const docs: DocsAndPRSchema = await llmService.getStructuredTinyRepoDocs(payload, jobId);
-    console.log("[PIPELINE] Docs generated successfully");
-
-    return docs;
+    return await llmService.getStructuredTinyRepoDocs(payload, jobId);
 }
