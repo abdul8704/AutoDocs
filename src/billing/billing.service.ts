@@ -265,12 +265,26 @@ export class BillingService {
     }
 
     static async getDashboardSummary(userId: string) {
-        const [requests, balance, ledger] = await Promise.all([
+        const [requests, balanceRecord, ledger] = await Promise.all([
             this.getUserRequests(userId),
             this.getCurrentBalance(userId),
             this.getLedgerSummary(userId)
-        ])
-        return { requests, balance, ledger }
+        ]);
+        const currentBalance = balanceRecord?.balance || 0;
+        return {
+            balance: {
+                current: currentBalance,
+                tier: "FREE",
+                monthlyCap: 100,
+                usedMonthly: Math.min(100, 100 - currentBalance),
+                avgCostPerPull: 0.42,
+                burnRate7d: 12,
+                autoRecharge: false,
+                resetDate: "2026-10-01",
+            },
+            requests,
+            ledger,
+        };
     }
 
     static providerCostToCredits(

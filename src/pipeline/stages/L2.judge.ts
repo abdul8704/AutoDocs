@@ -2,7 +2,7 @@ import { DiffSummary, FileRecord } from "../pipeline.types";
 import { packFiles, packFilesByName } from "../pipeline.helper";
 import { LLMService } from "../../LLM/llm.service";
 import { DiffJudgeSchema } from "../../LLM/llm.types";
-import { CODE_EXTS, DOC_EXTS, KEEP_NONCODE, EXCLUDE_DIRS, EXCLUDE_FILES, isPublishedDoc, isBlacklistedDoc, isIntentFile } from "./L1.inventory";
+import { CODE_EXTS, DOC_EXTS, KEEP_NONCODE, EXCLUDE_DIRS, EXCLUDE_FILES, isBlacklistedDoc, isIntentFile } from "./L1.inventory";
 import * as path from "path";
 import { SimpleGit } from "simple-git";
 
@@ -115,10 +115,10 @@ export const getRemovedFiles = async (git: SimpleGit, beforeSha: string, afterSh
 
     let removedFiles = "";
 
-    for (let fileName of diffRaw)
+    for (const fileName of diffRaw)
         removedFiles += fileName + ",";
 
-    for (let fileName of renamedFiles)
+    for (const fileName of renamedFiles)
         removedFiles += fileName + ",";
 
     return removedFiles;

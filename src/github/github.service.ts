@@ -2,12 +2,11 @@ import simpleGit, { SimpleGit } from "simple-git"
 import fs, { mkdir } from "fs/promises";
 import { createPath } from "../utils/pathHelper.utils";
 import { constructPath } from "../utils/pathHelper.utils"
-import { CodebaseChangeEvent, GitFetchResponse } from "../types/repo.types";
 import prisma from "../prisma/prisma";
-import * as githubAppService from "./github.app.service"
+import * as githubAppService from "./github.app.service";
 
-import { publishCleanup, publishDeepCloneForPush, publishPushForClassification, removeJobsForRepo } from "../queue/publishers"
-import { CleanupJobData, DeepClonePushJobData, FirstTimeImportJobData, PushClassifyJobData } from "../queue/types.queue";
+import { publishCleanup, publishPushForClassification, removeJobsForRepo } from "../queue/publishers";
+import { CleanupJobData, PushClassifyJobData } from "../queue/types.queue";
 import path from "path";
 import { ScopedCacheService } from "../LLM/llm.cache.service";
 import { BillingService } from "../billing/billing.service";
@@ -87,14 +86,14 @@ export const checkIfRepoExists = async (pathOrRepoId: string): Promise<boolean> 
         const stats = await fs.stat(targetPath);
         console.log("[CheckIfExists]", targetPath, stats.isDirectory());
         return stats.isDirectory();
-    } catch (err: any) {
-        if (err.code === "ENOENT") {
+    } catch (err: unknown) {
+        if (typeof err === "object" && err !== null && "code" in err && (err as { code?: string }).code === "ENOENT") {
             return false;
         }
         throw err;
     }
 }
-export const evictAllCaches = async (payload: any) => {
+export const evictAllCaches = async (payload: { pull_request?: { number?: number }; repository?: { id?: number | string } }) => {
     const prNumber = payload.pull_request?.number;
     const githubRepoId = payload.repository?.id?.toString();
 
@@ -137,7 +136,7 @@ export const evictAllCaches = async (payload: any) => {
     }
 };
 
-export const githubWebhookHandlerService = async (payload: any) => {
+export const githubWebhookHandlerService = async (payload: { repository: { id: number | string; default_branch: string; name?: string }; ref: string; after: string; before: string }) => {
     // check if repo id is there in db
     const githubRepoId = payload.repository.id.toString();
     const branch = payload.ref; // e.g. "refs/heads/main"
@@ -296,9 +295,9 @@ export const openPR = async (
 
         console.log(`PR successfully created: ${prResponse.data.html_url}`);
         return { prNumber: prResponse.data.number, prLink: prResponse.data.html_url };
-    } catch (err: any) {
+    } catch (err: unknown) {
         // Fallback: If PR already exists for this head branch, update the existing PR
-        if (err.status === 422) {
+        if (typeof err === "object" && err !== null && "status" in err && (err as { status?: number }).status === 422) {
             const existingPrs = await octokit.rest.pulls.list({
                 owner,
                 repo,

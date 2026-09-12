@@ -16,7 +16,7 @@ export abstract class BaseLLMProvider implements LLM_ProviderInterface {
         }
 
         // Extract starting bracket/brace if surrounded by fluff
-        const firstBrace = cleaned.search(/[\{\[]/);
+        const firstBrace = cleaned.search(/[{[]/);
         if (firstBrace !== -1) {
             const lastBrace = Math.max(cleaned.lastIndexOf("}"), cleaned.lastIndexOf("]"));
             if (lastBrace > firstBrace) {
@@ -26,7 +26,7 @@ export abstract class BaseLLMProvider implements LLM_ProviderInterface {
             }
         }
 
-        let parsed: any;
+        let parsed: unknown;
         try {
             parsed = JSON.parse(cleaned);
         } catch (initialError) {
@@ -35,8 +35,8 @@ export abstract class BaseLLMProvider implements LLM_ProviderInterface {
                 const repaired = this.repairTruncatedJson(cleaned);
                 console.log("[parseJsonResponse] Successfully repaired truncated JSON response.");
                 parsed = JSON.parse(repaired);
-            } catch (repairError) {
-                throw new Error(`Failed to parse JSON response from LLM: ${initialError instanceof Error ? initialError.message : "Unknown error"}`);
+            } catch {
+                throw new Error(`Failed to parse JSON response from LLM: ${initialError instanceof Error ? initialError.message : "Unknown error"}`, { cause: initialError });
             }
         }
 
@@ -45,7 +45,7 @@ export abstract class BaseLLMProvider implements LLM_ProviderInterface {
         } catch (error) {
             if (error instanceof z.ZodError) {
                 const issueDetails = error.issues.map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`).join("; ");
-                throw new Error(`Invalid JSON schema validation: ${issueDetails}`);
+                throw new Error(`Invalid JSON schema validation: ${issueDetails}`, { cause: error });
             }
             throw error;
         }

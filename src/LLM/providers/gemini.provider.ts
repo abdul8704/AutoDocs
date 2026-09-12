@@ -1,9 +1,9 @@
-import { GoogleGenAI, Type, Schema as GeminiSchema } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 import { BaseLLMProvider } from "./base.provider";
 import { LLMResponse, LLMRuntimeConfig } from "../llm.types";
 import { zodToGeminiSchema } from "../llm.helper";
-import { env } from "../../config/env"
+import { env } from "../../config/env";
 
 export class GeminiProvider extends BaseLLMProvider {
     private ai: GoogleGenAI;

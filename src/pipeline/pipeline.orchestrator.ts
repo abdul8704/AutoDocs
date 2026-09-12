@@ -1,16 +1,12 @@
 import simpleGit from "simple-git";
-import { getRepoFiles } from "./stages/L1.inventory"
-import prisma from "../prisma/prisma";
-import { DiffSummary, FileRecord } from "./pipeline.types"
-import { isCompatibleForTinyRepo, packFiles, updateJobStatus } from "./pipeline.helper"
+import { getRepoFiles } from "./stages/L1.inventory";
+import { DiffSummary, FileRecord } from "./pipeline.types";
+import { isCompatibleForTinyRepo, updateJobStatus } from "./pipeline.helper";
 import { LLMService } from "../LLM/llm.service";
-import { DocsAndPRSchema } from "../LLM/llm.types";
-import { writeFilesAndCommit, openPR, mergeChanges } from "../github/github.service";
-import { generateDocsTinyRepo } from "./stages/L4.tinyDocs"
+import { mergeChanges } from "../github/github.service";
 import { evaluateDiff, getChangedFilesPacked, getRemovedFiles, llmJudge } from "./stages/L2.judge";
-import { clone } from "zod";
 import { CACHE_RECONCILIATION_ENFORCEMENT_PROMPT } from "../LLM/llm.constants";
-import { ScopedCacheService } from "../LLM/llm.cache.service";
+import { publishDocUpdate } from "../queue/publishers";
 
 export const generateFirstTimeDocs = async (
     userId: string,
@@ -22,14 +18,11 @@ export const generateFirstTimeDocs = async (
     installationId: number,
     defaultBranch: string = "main"
 ): Promise<string> => {
-    const llmService = new LLMService();
-
     const git = simpleGit(repoPath);
     const {
         files,
         codeFiles,
         intentFiles,
-        docFiles,
         others
     }: {
         files: string[];
@@ -47,50 +40,22 @@ export const generateFirstTimeDocs = async (
         throw new Error("Repo is not compatible for TinyRepo");
     }
     else {
-        await updateJobStatus(jobId, "GENERATING");
+        await updateJobStatus(jobId, "PENDING");
 
-        console.log("[PIPELINE] Preprocessing done, about to generate docs")
-        const generatedDocs: DocsAndPRSchema = await generateDocsTinyRepo(jobId, codeFiles, intentFiles, docFiles, others, repoPath, llmService, userId, repoId, currentCommitSha);
-
-        console.log("[PIPELINE] Writing to repo");
-
-        await writeFilesAndCommit("auto-Docs", repoPath, [{
-            path: "ARCHITECTURE.md",
-            content: generatedDocs.documentation
-        }], generatedDocs.commitMessage, cloneUrl);
-
-        const parsedUrl = new URL(cloneUrl);
-        const parts = parsedUrl.pathname.split('/');
-        const repoOwner = parts[1];
-        const repoName = parts[2].replace('.git', '');
-
-        const { prNumber, prLink } = await openPR(
-            repoOwner,
-            repoName,
-            generatedDocs.prTitle,
-            generatedDocs.prBody,
-            "auto-Docs",
+        console.log("[PIPELINE] Preprocessing done, delegating doc generation to docGenQueue...");
+        await publishDocUpdate({
+            docJobId: jobId,
+            userId,
+            repoId,
+            repoPath,
+            cloneUrl,
+            installationId,
+            currentCommitSha,
             defaultBranch,
-            installationId
-        )
-
-        console.log("[PIPELINE] PR opened successfully")
-
-        await prisma.docsUpdateJob.update({
-            where: {
-                id: jobId
-            },
-            data: {
-                status: "PR_OPEN",
-                branchName: "auto-Docs",
-                pullRequestId: prNumber,
-                prLink
-            }
+            isFirstTime: true,
         });
 
-
-
-        return prLink;
+        return "Job delegated to docGenQueue";
     }
 }
 
@@ -152,10 +117,10 @@ export const handleWebhooks = async (
         console.log("[WebhookWorker] This repo is big, not suitable for TinyRepo");
         throw new Error("Repo is not compatible for TinyRepo");
     }
-    await updateJobStatus(jobId, "GENERATING");
+    await updateJobStatus(jobId, "PENDING");
 
-    let generatedDocs: DocsAndPRSchema;
-    
+    let promptSuffix: string | undefined = undefined;
+
     // cache not expired, and we can just add and send the new updations
     if(await llmService.checkCache(userId, repoId, "tinyRepo", beforeSha)){
         const removedFiles: string = await getRemovedFiles(git, beforeSha, afterSha);
@@ -166,7 +131,7 @@ export const handleWebhooks = async (
             othersNew
         } = getChangedFilesPacked(diffSummary as DiffSummary, repoPath);
         
-        const promptSuffix = `
+        promptSuffix = `
         <deleted_files>
             ${removedFiles}
         </deleted_files>
@@ -185,73 +150,29 @@ export const handleWebhooks = async (
                 ${othersNew}
             </other_files>
         </updated_files>
-        `
-        generatedDocs = await generateDocsTinyRepo(
-            jobId, 
-            codeFiles, 
-            intentFiles, 
-            docFiles, 
-            others, 
-            repoPath, 
-            llmService, 
-            userId, 
-            repoId, 
-            afterSha, 
-            promptSuffix + "\n" + CACHE_RECONCILIATION_ENFORCEMENT_PROMPT
-        );
-    }
-    else{
-        generatedDocs = await generateDocsTinyRepo(
-            jobId, 
-            codeFiles, 
-            intentFiles, 
-            docFiles, 
-            others, 
-            repoPath, 
-            llmService, 
-            userId, 
-            repoId, 
-            afterSha
-        );
+        \n` + CACHE_RECONCILIATION_ENFORCEMENT_PROMPT;
     }
 
-    console.log("[PIPELINE] Writing to repo");
-    
-    await writeFilesAndCommit("auto-Docs", repoPath, [{
-        path: "ARCHITECTURE.md",
-        content: generatedDocs.documentation
-    }], generatedDocs.commitMessage, cloneUrl);
-
-    const parsedUrl = new URL(cloneUrl);
-    const parts = parsedUrl.pathname.split('/');
-    const repoOwner = parts[1];
-    const repoName = parts[2].replace('.git', '');
+    console.log("[PIPELINE] Webhook evaluation passed, delegating doc generation to docGenQueue...");
 
     const baseBranch = ref ? ref.replace("refs/heads/", "") : "main";
 
-    const { prNumber, prLink } = await openPR(
-        repoOwner,
-        repoName,
-        generatedDocs.prTitle,
-        generatedDocs.prBody,
-        "auto-Docs",
-        baseBranch,
-        installationId
-    )
-
-    console.log("[PIPELINE] PR opened successfully")
-
-    await prisma.docsUpdateJob.update({
-        where: {
-            id: jobId
-        },
-        data: {
-            status: "PR_OPEN",
-            branchName: "auto-Docs",
-            pullRequestId: prNumber,
-            prLink
-        }
+    await publishDocUpdate({
+        docJobId: jobId,
+        userId,
+        repoId,
+        repoPath,
+        cloneUrl,
+        installationId,
+        currentCommitSha: afterSha,
+        beforeSha,
+        afterSha,
+        ref,
+        defaultBranch: baseBranch,
+        isFirstTime: false,
+        promptSuffix,
     });
+
     return { regenerated: true, prLink: null };
 }
 

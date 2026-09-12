@@ -8,7 +8,7 @@ import { OAuthProfile } from "./provider.types";
 // `state` is an opaque, single-use value the caller generates and later validates on
 // `/auth/github/callback` to protect against CSRF.
 export const getGithubAuthUrl = (state: string): string => {
-    const clientId = env.GITHUB_CLIENT_ID;
+    const clientId = env.GITHUB_CLIENT_ID || env.GITHUB_APP_CLIENT_ID;
     const redirectUrl = `${env.SERVER_URL}/auth/github/callback`;
 
     const params = new URLSearchParams({
@@ -23,8 +23,8 @@ export const getGithubAuthUrl = (state: string): string => {
 
 // Exchanges the one-time `code` GitHub redirected us with for a real access token.
 export const exchangeGithubCode = async (code: string): Promise<string> => {
-    const clientId = env.GITHUB_CLIENT_ID;
-    const clientSecret = env.GITHUB_CLIENT_SECRET;
+    const clientId = env.GITHUB_CLIENT_ID || env.GITHUB_APP_CLIENT_ID;
+    const clientSecret = env.GITHUB_CLIENT_SECRET || env.GITHUB_APP_CLIENT_SECRET;
 
     const response = await axios.post(
         "https://github.com/login/oauth/access_token",

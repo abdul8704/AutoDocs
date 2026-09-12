@@ -5,7 +5,6 @@ import prisma from "../prisma/prisma";
 import { constructPath } from "../utils/pathHelper.utils";
 import { checkIfRepoExists, cloneNewRepo, fetchLocalChanges } from "../github/github.service";
 import { handleWebhooks } from "../pipeline/pipeline.orchestrator";
-import { rm } from "fs";
 import { updateJobStatus } from "../pipeline/pipeline.helper";
 import { getAuthenticatedRepoUrl } from "../github/github.app.service";
 

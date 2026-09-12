@@ -1,4 +1,4 @@
-import { LLMRuntimeConfig, CacheLookupParams } from "./llm.types";
+import { CacheLookupParams } from "./llm.types";
 import { GoogleGenAI } from "@google/genai";
 import prisma from "../prisma/prisma";
 import { env } from "../config/env";
@@ -66,7 +66,7 @@ export class ScopedCacheService {
                 throw new Error("Failed to create Gemini cache: missing cache name in response");
             }
 
-            let cacheWriteTokens = 0;
+            let cacheWriteTokens: number;
             try {
                 const countRes = await this.geminiAi.models.countTokens({
                     model: params.model,
@@ -112,7 +112,7 @@ export class ScopedCacheService {
     }
 
     private async safeDeleteCache(cacheName: string) {
-        try { await this.geminiAi.caches.delete({ name: cacheName }); } catch { }
+        try { await this.geminiAi.caches.delete({ name: cacheName }); } catch (err) { void err; }
     }
 
     async checkIfCacheValid(userId: string, repoId: string, taskKey: string, currentCommitSha: string, model: string) {

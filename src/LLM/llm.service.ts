@@ -121,9 +121,10 @@ export class LLMService {
       console.log("diff eval done, that costs ", usage);
 
       return result;
-    } catch (err: any) {
+    } catch (err: unknown) {
       const durationMs = Date.now() - startTime;
-      await this.recordLog(userId, "judge", providerName, config.model, "FAILED", durationMs, jobId, undefined, err?.message || String(err));
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      await this.recordLog(userId, "judge", providerName, config.model, "FAILED", durationMs, jobId, undefined, errorMessage);
       throw err;
     }
   }
@@ -195,17 +196,18 @@ export class LLMService {
       }
       return res;
     } 
-    catch (err: any) {
+    catch (err: unknown) {
       const durationMs = Date.now() - startTime;
-      await this.recordLog(payload.userId, "tinyRepo", providerName, config.model, "FAILED", durationMs, jobId, undefined, err?.message || String(err));
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      await this.recordLog(payload.userId, "tinyRepo", providerName, config.model, "FAILED", durationMs, jobId, undefined, errorMessage);
       throw err;
     }
   }
   async checkCache(userId: string, repoId: string, taskKey: string, currentCommitSha: string) {
-    const { provider, config, providerName } = await this.getProviderAndConfig(taskKey as LLMTaskType);
+    const { config } = await this.getProviderAndConfig(taskKey as LLMTaskType);
     const cacheService = new ScopedCacheService();
 
-    const { exists, key } = await cacheService.checkIfCacheValid(userId, repoId, taskKey, currentCommitSha, config.model);
+    const { exists } = await cacheService.checkIfCacheValid(userId, repoId, taskKey, currentCommitSha, config.model);
     return exists;
   }
 }

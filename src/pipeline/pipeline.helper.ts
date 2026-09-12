@@ -4,7 +4,7 @@ import { FileRecord, JobStatus } from "./pipeline.types"
 import * as fs from "fs";
 import { encoding_for_model, get_encoding, Tiktoken, TiktokenModel } from "tiktoken";
 
-export const isCompatibleForTinyRepo = async (git_ls: string[], codeFiles: FileRecord[], intentFiles: FileRecord[], others: FileRecord[], repoPath: string) => {
+export const isCompatibleForTinyRepo = async (_git_ls: string[], codeFiles: FileRecord[], intentFiles: FileRecord[], others: FileRecord[], repoPath: string) => {
     const config = await prisma.lLMTaskConfig.findUnique({
         where: {
             taskKey: "tinyRepo"
@@ -21,18 +21,7 @@ export const isCompatibleForTinyRepo = async (git_ls: string[], codeFiles: FileR
 
     const contextWindow: number = config.model.contextWindow || 0;
 
-    let totalLength = 0;
-
-    for (const codeFile of codeFiles)
-        totalLength += codeFile.sizeBytes;
-
-    for (const intentFile of intentFiles)
-        totalLength += intentFile.sizeBytes;
-
-    for (const other of others)
-        totalLength += other.sizeBytes;
-
-    let totalInputToken = estimateToken(codeFiles, config.model.modelName, repoPath) +
+    const totalInputToken = estimateToken(codeFiles, config.model.modelName, repoPath) +
         estimateToken(intentFiles, config.model.modelName, repoPath) +
         estimateToken(others, config.model.modelName, repoPath);
 

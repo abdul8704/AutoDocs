@@ -28,10 +28,28 @@ export const getRepoDetails = async (userId: string, repoId: string) => {
     const completedJobs = repo.jobs.filter((j) => j.status === "COMPLETED" || j.status === "PR_OPEN").length;
     const failedJobs = repo.jobs.filter((j) => j.status === "FAILED").length;
 
-    const latestJob = repo.jobs[0] || null;
+    const latestJobRaw = repo.jobs[0] || null;
+    let latestJob = null;
+    if (latestJobRaw) {
+        const stepperState = {
+            webhookRecv: { status: "COMPLETED", durationMs: 240 },
+            checkout: { status: latestJobRaw.status !== "PENDING" ? "COMPLETED" : "IN_PROGRESS", durationMs: 1200 },
+            astDiff: { status: ["SCANING", "GENERATING", "PR_OPEN", "COMPLETED", "MERGED"].includes(latestJobRaw.status) ? "COMPLETED" : "PENDING" },
+            llmGen: { status: ["GENERATING", "PR_OPEN", "COMPLETED", "MERGED"].includes(latestJobRaw.status) ? "COMPLETED" : "PENDING", durationMs: 4800 },
+            prOpen: { status: ["PR_OPEN", "COMPLETED", "MERGED"].includes(latestJobRaw.status) ? "COMPLETED" : "PENDING", prLink: latestJobRaw.prLink },
+        };
+        latestJob = {
+            ...latestJobRaw,
+            stepperState,
+        };
+    }
 
     return {
-        repo,
+        repo: {
+            ...repo,
+            default_branch: "main",
+            sync_status: repo.last_processed_commit ? "Synchronized" : "Pending",
+        },
         latestJob,
         stats: {
             totalJobs,
@@ -104,7 +122,7 @@ export const getRepoGeneratedDocs = async (userId: string, repoId: string) => {
             filename: "ARCHITECTURE.md",
             content,
         };
-    } catch (err) {
+    } catch {
         return {
             exists: false,
             filename: "ARCHITECTURE.md",

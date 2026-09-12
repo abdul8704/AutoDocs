@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import * as repoService from "./repo.service";
 
 export const getRepoDetailsController = async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     const repoId = req.params.repoId as string;
 
     const data = await repoService.getRepoDetails(userId, repoId);
@@ -10,7 +10,7 @@ export const getRepoDetailsController = async (req: Request, res: Response) => {
 };
 
 export const triggerDocGenController = async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     const repoId = req.params.repoId as string;
 
     const data = await repoService.triggerDocGenForRepo(userId, repoId);
@@ -18,7 +18,7 @@ export const triggerDocGenController = async (req: Request, res: Response) => {
 };
 
 export const getRepoGeneratedDocsController = async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     const repoId = req.params.repoId as string;
 
     const data = await repoService.getRepoGeneratedDocs(userId, repoId);

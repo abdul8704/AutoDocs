@@ -122,8 +122,9 @@ export const publishPushForClassification = async (
  * Target: docGenQueue ('generate-doc-update')
  */
 export const publishDocUpdate = async (data: DocUpdateJobData) => {
+  const commitTag = data.currentCommitSha || data.afterSha || data.docJobId;
   return await docGenQueue.add("generate-doc-update", data, {
-    jobId: `docgen-${data.repoId}-${data.afterSha}`, // Idempotent per commit SHA
+    jobId: `docgen-${data.repoId}-${commitTag}`,
   });
 };
 

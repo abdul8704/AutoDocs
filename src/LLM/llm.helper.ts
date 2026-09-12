@@ -6,19 +6,19 @@ import prisma from "../prisma/prisma";
  * Converts a Zod schema to standard JSON Schema supported natively by Gemini.
  */
 export function zodToGeminiSchema(zodSchema: z.ZodTypeAny) {
-  const jsonSchema = zodToJsonSchema(zodSchema as any, {
+  const jsonSchema = zodToJsonSchema(zodSchema as unknown as Parameters<typeof zodToJsonSchema>[0], {
     target: 'openApi3', // Strips $schema references and unwraps root definitions
     $refStrategy: 'none',
   });
 
   // Recursively clean unsupported keywords like additionalProperties for Gemini API
-  const cleanSchema = (obj: any): any => {
+  const cleanSchema = (obj: unknown): unknown => {
     if (!obj || typeof obj !== 'object') return obj;
     if (Array.isArray(obj)) return obj.map(cleanSchema);
-    const copy: any = {};
+    const copy: Record<string, unknown> = {};
     for (const key of Object.keys(obj)) {
       if (key === 'additionalProperties') continue;
-      copy[key] = cleanSchema(obj[key]);
+      copy[key] = cleanSchema((obj as Record<string, unknown>)[key]);
     }
     return copy;
   };

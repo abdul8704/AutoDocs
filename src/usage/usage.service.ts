@@ -127,9 +127,20 @@ export const getUsageByUserId = async (userId: string): Promise<LLMUsageMetrics[
 
     return logs.map(log => {
         const repoName = log.jobId ? (jobIdToRepoName.get(log.jobId) || "Unknown") : "Unknown";
-        const { jobId, ...logMetrics } = log;
         return {
-            ...logMetrics,
+            taskKey: log.taskKey,
+            provider: log.provider,
+            modelName: log.modelName,
+            status: log.status,
+            durationMs: log.durationMs,
+            tokenCost: log.tokenCost,
+            cacheStorageCost: log.cacheStorageCost,
+            savedCost: log.savedCost,
+            promptTokens: log.promptTokens,
+            cachedTokens: log.cachedTokens,
+            inputTokens: log.inputTokens,
+            outputTokens: log.outputTokens,
+            createdAt: log.createdAt,
             repoName
         };
     });

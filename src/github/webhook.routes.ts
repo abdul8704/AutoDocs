@@ -6,8 +6,8 @@ const router: Router = Router();
 
 router.post("/github",
      json({
-        verify: (req: any, _res, buf) => {
-            req.rawBody = buf;
+        verify: (req, _res, buf) => {
+            (req as { rawBody?: Buffer }).rawBody = buf;
         },
      }),
      asyncHandler(githubHandler))

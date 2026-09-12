@@ -45,12 +45,19 @@ export interface PushClassifyJobData {
 
 /** Payload for generating updated documentation via Heavy LLM */
 export interface DocUpdateJobData {
-  repoId: string;
-  repoFullName: string;
-  affectedDocs: string[];
-  beforeSha: string;
-  afterSha: string;
+  docJobId: string;
   userId: string;
+  repoId: string;
+  repoPath: string;
+  cloneUrl: string;
+  installationId: number;
+  currentCommitSha: string;
+  beforeSha?: string;
+  afterSha?: string;
+  ref?: string;
+  defaultBranch?: string;
+  isFirstTime: boolean;
+  promptSuffix?: string;
   customPrompt?: string;
 }
 

@@ -16,14 +16,19 @@ import promptRouter from "./LLM/prompts/prompt.router";
 import modelRouter from "./LLM/models/models.router"
 import taskConfigRouter from "./LLM/config/llm.config.router"
 
+import billingRouter from "./billing/billing.router";
+
 import userRouter from "./user/user.routes";
 import jobsRouter from "./jobs/jobs.routes";
 import repoRouter from "./repo/repo.routes";
 import dashboardRouter from "./dashboard/dashboard.routes";
 import adminRouter from "./admin/admin.routes";
+import usageRouter from "./usage/usage.router";
+import searchRouter from "./search/search.routes";
 
 import "./worker/storage.worker"
 import "./worker/webhook.worker"
+import "./worker/docgen.worker"
 const app = express();
 
 app.use("/api/webhooks", githubRouter);
@@ -50,6 +55,7 @@ app.get("/health", (_req, res) => {
 app.use(authenticate);
 
 app.use("/api/user", userRouter);
+app.use("/api/billing", billingRouter);
 app.use("/api/jobs", jobsRouter);
 app.use("/api/repos", repoRouter);
 app.use("/api/dashboard", dashboardRouter);
@@ -59,6 +65,8 @@ app.use("/api/llm-config", llmConfigRouter);
 app.use("/api/prompts", promptRouter);
 app.use("/api/models", modelRouter);
 app.use("/api/task-config", taskConfigRouter);
+app.use("/api/usage", usageRouter);
+app.use("/api/search", searchRouter);
 
 app.use(errorMiddleware);
 

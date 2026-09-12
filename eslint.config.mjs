@@ -10,6 +10,8 @@ export default tseslint.config(
       "dist/",
       "build/",
       "coverage/",
+      "codebases/",
+      "client/",
     ],
   }
 );

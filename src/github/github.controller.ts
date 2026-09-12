@@ -1,11 +1,9 @@
 import { Request, Response } from "express";
-import * as githubService from "./github.service"
-import { CodebaseChangeEvent } from "../types/repo.types"
-import { verifyGitHubSignature } from "../utils/github.security.utils"
-import * as githubAppService from "./github.app.service"
+import * as githubService from "./github.service";
+import { verifyGitHubSignature } from "../utils/github.security.utils";
+import * as githubAppService from "./github.app.service";
 import { verifyAccessToken } from "../auth/jwt.service";
-import crypto from "crypto";
-import { env } from "../config/env"
+import { env } from "../config/env";
 import { HttpError } from "../utils/httpError.utils";
 import { BillingService } from "../billing/billing.service";
 import prisma from "../prisma/prisma";
@@ -19,7 +17,7 @@ export const githubHandler = async (req: Request, res: Response) => {
     const signatureHeader = req.headers['x-hub-signature-256'] as string | undefined;
 
     // 2. Extract the raw body buffer attached by the middleware
-    const rawBody = (req as any).rawBody as Buffer;
+    const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
     if (!signatureHeader || !rawBody)
         return res.status(401).send("Invalid signature");
 
@@ -86,14 +84,14 @@ export const handleSetupCallback = async (req: Request, res: Response) => {
 // Tells the frontend whether this user has already installed the GitHub App, so it
 // can render the "Connect GitHub" button exactly once.
 export const getInstallationStatus = async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
 
     const status = await githubAppService.getInstallationStatus(userId);
     res.status(200).json({ success: true, ...status, appSlug: env.GITHUB_APP_SLUG });
 }
 
 export const getAllAccessibleRepos = async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
 
     const repos = await githubAppService.getAllReposForUser(userId);
     res.status(200).json({ success: true, repos });
@@ -101,26 +99,27 @@ export const getAllAccessibleRepos = async (req: Request, res: Response) => {
 
 export const importRepo = async (req: Request, res: Response) => {
     const { githubRepoId, name, cloneUrl, installation_id, installationId } = req.body;
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     const instId = installation_id ?? installationId;
     const parsedInstId = instId !== undefined && instId !== null ? Number(instId) : undefined;
     try {
         const importedRepo = await githubAppService.importThisRepo(userId, githubRepoId, name, cloneUrl, parsedInstId);
         res.status(201).json({ success: true, importedRepo });
-    } catch (err: any) {
+    } catch (err: unknown) {
         if (err instanceof HttpError) {
             return res.status(err.statusCode).json({ success: false, error: err.message });
         }
-        if (err?.message === "Repo size is greater than 1GB, which is not allowed.") {
-            return res.status(400).json({ success: false, error: err.message });
+        const errMessage = err instanceof Error ? err.message : String(err);
+        if (errMessage === "Repo size is greater than 1GB, which is not allowed.") {
+            return res.status(400).json({ success: false, error: errMessage });
         }
         console.error("Error importing repo:", err);
-        return res.status(500).json({ success: false, error: err.message || "Error importing repo" });
+        return res.status(500).json({ success: false, error: errMessage || "Error importing repo" });
     }
 }
 
 export const getImportedRepos = async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
 
     const repos = await githubAppService.getImportedRepos(userId);
     res.status(200).json({ success: true, repos });
@@ -128,7 +127,7 @@ export const getImportedRepos = async (req: Request, res: Response) => {
 
 export const deleteRepo = async (req: Request, res: Response) => {
     const repoId = req.params.repoId as string;
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
 
     await githubService.deleteRepo(userId, repoId);
     return res.status(202).json({ success: true, message: "Repo deletion job started successfully" });

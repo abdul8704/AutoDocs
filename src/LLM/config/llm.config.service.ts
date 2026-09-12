@@ -1,5 +1,5 @@
 import prisma from "../../prisma/prisma";
-import { SupportedProviders, LLMRuntimeConfig, LLMTaskType } from "../llm.types";
+import { LLMRuntimeConfig, LLMTaskType } from "../llm.types";
 
 export class LLMConfigService {
   private static cache = new Map<LLMTaskType, { providerName: string, config: LLMRuntimeConfig }>();

@@ -3,7 +3,7 @@ import * as jobsService from "./jobs.service";
 import { JobStatus } from "../pipeline/pipeline.types";
 
 export const getJobsController = async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     const { repoId, status, page, limit, offset } = req.query;
 
     const result = await jobsService.getJobsForUser(userId, {
@@ -18,7 +18,7 @@ export const getJobsController = async (req: Request, res: Response) => {
 };
 
 export const getJobsByUserIdController = async (req: Request, res: Response) => {
-    const targetUserId = req.params.userId || (req as any).user.id;
+    const targetUserId = typeof req.params.userId === "string" ? req.params.userId : req.user!.id;
     const { repoId, status, page, limit, offset } = req.query;
 
     const result = await jobsService.getJobsForUser(targetUserId, {
@@ -33,7 +33,7 @@ export const getJobsByUserIdController = async (req: Request, res: Response) => 
 };
 
 export const getJobByIdController = async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     const jobId = req.params.jobId as string;
 
     const job = await jobsService.getJobById(userId, jobId);
@@ -41,9 +41,35 @@ export const getJobByIdController = async (req: Request, res: Response) => {
 };
 
 export const retryJobController = async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = req.user!.id;
     const jobId = req.params.jobId as string;
 
     const job = await jobsService.retryJob(userId, jobId);
     res.status(200).json({ success: true, message: "Job re-queued successfully", job });
+};
+
+export const streamJobsTelemetryController = async (req: Request, res: Response) => {
+    const userId = req.user?.id;
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    res.write(`data: ${JSON.stringify({ type: "CONNECTED", timestamp: new Date().toISOString() })}\n\n`);
+
+    const interval = setInterval(async () => {
+        try {
+            if (userId) {
+                const latestJobs = await jobsService.getJobsForUser(userId, { limit: 5 });
+                res.write(`data: ${JSON.stringify({ type: "TELEMETRY_UPDATE", jobs: latestJobs.jobs, timestamp: new Date().toISOString() })}\n\n`);
+            }
+        } catch {
+            // connection dropped
+        }
+    }, 5000);
+
+    req.on("close", () => {
+        clearInterval(interval);
+        res.end();
+    });
 };

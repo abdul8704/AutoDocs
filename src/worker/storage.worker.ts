@@ -1,14 +1,13 @@
 import { Worker, Job } from "bullmq";
 import { redisConnection } from "../config/redis";
 import type { StorageJobData } from "../queue/types.queue"
-import { CleanupJobData, DeepClonePushJobData, FirstTimeImportJobData } from "../queue/types.queue"
+import { CleanupJobData, FirstTimeImportJobData } from "../queue/types.queue"
 import { constructPath } from "../utils/pathHelper.utils"
-import { checkIfRepoExists, fetchLocalChanges, pullChanges } from "../github/github.service";
+import { checkIfRepoExists, pullChanges } from "../github/github.service";
 import { cloneNewRepo } from "../github/github.service";
 import { generateFirstTimeDocs } from "../pipeline/pipeline.orchestrator"
 import { rm } from "fs/promises"
 import prisma from "../prisma/prisma";
-import { DocsAndPRSchema } from "../LLM/llm.types";
 import { updateJobStatus } from "../pipeline/pipeline.helper";
 
 export const storageWorker = new Worker<StorageJobData>(
@@ -39,7 +38,7 @@ export const storageWorker = new Worker<StorageJobData>(
 
                 const prLink: string = await generateFirstTimeDocs(repoData.userId, repoData.repoId, headSha, repoPath, jobId, repoData.githubUrl, repoData.installationId, repoData.defaultBranch);
                 console.log("[StorageWorker] First time docs generated successfully, check PR at", prLink);
-            } catch (err: any) {
+            } catch (err: unknown) {
                 console.error(`[StorageWorker] Job '${job.name}' (ID: ${job.id}) failed:`, err);
                 await prisma.docsUpdateJob.update({
                     where: { id: jobId },
@@ -53,7 +52,7 @@ export const storageWorker = new Worker<StorageJobData>(
             }
         }
         else if (job.name === "clone-deep-push") {
-
+            console.log("[StorageWorker] Processing clone-deep-push job");
         }
         else if (job.name === "cleanup-repo") {
             const data = job.data as CleanupJobData;

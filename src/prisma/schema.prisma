@@ -31,6 +31,7 @@ model User {
   repos            Repo[]
 
   planType       String          @default("FREE")
+  usedDocsQuota  Int             @default(0)
   llmCache       LLMCache[]
   creditBalance  CreditBalance?
   creditRequests CreditRequest[]

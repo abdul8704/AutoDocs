@@ -5,8 +5,9 @@ export const errorMiddleware = (
     err: Error,
     req: Request,
     res: Response,
-    next: NextFunction
+    _next: NextFunction
 ) => {
+    void _next;
     console.error(err);
 
     const statusCode = err instanceof HttpError ? err.statusCode : 500;
