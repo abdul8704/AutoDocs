@@ -15,19 +15,32 @@ const BCRYPT_ROUNDS = 10;
 // tied to the `githubId` column in the schema - a future Google provider would need
 // its own equivalent (e.g. a `googleId` column) and lookup/creation function.
 export const findOrCreateGithubUser = async (profile: OAuthProfile) => {
+    const adminEmail = (process.env.ADMIN_EMAIL || process.env.ADMIN_EMAILS)?.trim().toLowerCase();
+    const userEmail = profile.email?.trim().toLowerCase();
+    const isAdminEmailMatch = Boolean(adminEmail && userEmail && adminEmail === userEmail);
+
     const existing = await prisma.user.findUnique({
         where: { githubId: profile.providerId },
     });
 
     if (existing) {
+        if (isAdminEmailMatch && existing.role !== "ADMIN") {
+            return await prisma.user.update({
+                where: { id: existing.id },
+                data: { role: "ADMIN" },
+            });
+        }
         return existing;
     }
+
+    const role = isAdminEmailMatch ? "ADMIN" : "USER";
 
     return prisma.user.create({
         data: {
             name: profile.name,
             githubId: profile.providerId,
             email: profile.email,
+            role,
         },
     });
 };

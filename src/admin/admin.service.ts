@@ -28,6 +28,7 @@ export const getAllUsersAdmin = async (query: { page?: number; limit?: number; s
                 profileUrl: true,
                 githubInstallationId: true,
                 planType: true,
+                role: true,
                 usedDocsQuota: true,
                 created_at: true,
                 updated_at: true,
@@ -306,4 +307,24 @@ export const getAdminMasterStats = async () => {
             },
         },
     };
+};
+
+export const promoteUserToAdmin = async (targetUserId: string) => {
+    const user = await prisma.user.findUnique({ where: { id: targetUserId } });
+    if (!user) {
+        throw new HttpError(404, "User not found");
+    }
+
+    const updated = await prisma.user.update({
+        where: { id: targetUserId },
+        data: { role: "ADMIN" },
+        select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+        },
+    });
+
+    return updated;
 };

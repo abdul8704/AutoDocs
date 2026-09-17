@@ -36,8 +36,8 @@ export const storageWorker = new Worker<StorageJobData>(
                 
                 await updateJobStatus(jobId, "SCANING")
 
-                const prLink: string = await generateFirstTimeDocs(repoData.userId, repoData.repoId, headSha, repoPath, jobId, repoData.githubUrl, repoData.installationId, repoData.defaultBranch);
-                console.log("[StorageWorker] First time docs generated successfully, check PR at", prLink);
+                const statusMsg: string = await generateFirstTimeDocs(repoData.userId, repoData.repoId, headSha, repoPath, jobId, repoData.githubUrl, repoData.installationId, repoData.defaultBranch);
+                console.log("[StorageWorker]", statusMsg);
             } catch (err: unknown) {
                 console.error(`[StorageWorker] Job '${job.name}' (ID: ${job.id}) failed:`, err);
                 await prisma.docsUpdateJob.update({

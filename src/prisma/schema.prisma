@@ -31,6 +31,7 @@ model User {
   repos            Repo[]
 
   planType       String          @default("FREE")
+  role           String          @default("USER")
   usedDocsQuota  Int             @default(0)
   llmCache       LLMCache[]
   creditBalance  CreditBalance?
@@ -57,6 +58,7 @@ model Repo {
   user_id        String
   github_repo_id String  @unique
   full_name      String?
+  language       String?
 
   installation_id       Int
   clone_url             String
@@ -86,10 +88,11 @@ model LLMTaskConfig {
 }
 
 model Prompt {
-  id         String @id @default(uuid())
-  prompt_key String
-  version    String
-  content    String
+  id          String   @id @default(uuid())
+  promptTitle String?  @default("")
+  prompt_key  String
+  version     String
+  content     String
 
   taskConfigs LLMTaskConfig[]
 
@@ -98,17 +101,18 @@ model Prompt {
 }
 
 model ModelRoster {
-  id            String          @id @default(uuid())
-  modelName     String
-  provider      String
-  contextWindow Int?            @default(1048576) // 1 million context window
-  taskConfigs   LLMTaskConfig[]
+  id                      String          @id @default(uuid())
+  modelName               String
+  provider                String
+  contextWindow           Int?            @default(1048576) // 1 million context window
+  taskConfigs             LLMTaskConfig[]
 
   //USD per million tokens
-  inputPrice  Float @default(0.0)
-  cacheRead   Float @default(0.0)
-  cacheWrite  Float @default(0.0)
-  outputPrice Float @default(0.0)
+  inputPrice              Float           @default(0.0)
+  cacheRead               Float           @default(0.0)
+  cacheWrite              Float           @default(0.0)
+  outputPrice             Float           @default(0.0)
+  cacheStorageCostPerHour Float           @default(0.0)
 
   @@unique([modelName, provider])
 }

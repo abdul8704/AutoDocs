@@ -7,7 +7,7 @@ import { getRepoFiles } from "../pipeline/stages/L1.inventory";
 import { generateDocsTinyRepo } from "../pipeline/stages/L4.tinyDocs";
 import { LLMService } from "../LLM/llm.service";
 import { DocsAndPRSchema } from "../LLM/llm.types";
-import { writeFilesAndCommit, openPR } from "../github/github.service";
+import { writeFilesAndCommit, openPR, getDefaultBranch } from "../github/github.service";
 import { updateJobStatus } from "../pipeline/pipeline.helper";
 import { BillingService } from "../billing/billing.service";
 
@@ -55,7 +55,7 @@ export const docGenWorker = new Worker<DocUpdateJobData>(
             const parts = parsedUrl.pathname.split("/");
             const repoOwner = parts[1];
             const repoName = parts[2].replace(".git", "");
-            const targetBranch = data.defaultBranch || "main";
+            const targetBranch = (await getDefaultBranch(data.repoPath).catch(() => "")) || data.defaultBranch || "main";
 
             console.log("[DocGenWorker] Opening GitHub Pull Request...");
 
@@ -66,7 +66,8 @@ export const docGenWorker = new Worker<DocUpdateJobData>(
                 generatedDocs.prBody,
                 "auto-Docs",
                 targetBranch,
-                data.installationId
+                data.installationId,
+                data.repoId
             );
 
             if (!data.isFirstTime) {
@@ -117,4 +118,8 @@ docGenWorker.on("completed", (job) => {
 
 docGenWorker.on("failed", (job, err) => {
     console.error(`[DocGenWorker] Job ${job?.id} failed:`, err);
+});
+
+docGenWorker.on("error", (err) => {
+    console.error("[DocGenWorker] Worker error:", err);
 });

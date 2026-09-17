@@ -103,8 +103,8 @@ export const handleWebhooks = async (
     console.log("LLM Decision: ", llmDecision);
 
     if (!llmDecision.verdict) {
-        console.log("dropping")
-        await updateJobStatus(jobId, "DROPPED");
+        console.log("dropping due to LLM judge verdict false:", llmDecision.reasoning);
+        await updateJobStatus(jobId, "DROPPED", llmDecision.reasoning || "LLM judge determined documentation revision is not needed.");
         return { regenerated: false, prLink: null };
     }
 

@@ -55,6 +55,7 @@ export interface GitAllRepoResponse {
     cloneUrl: string;
     isPrivate: boolean;
     defaultBranch: string;
+    language?: string | null;
 }
 
 export interface InstallationStatusResponse {
@@ -69,6 +70,7 @@ export interface ImportedRepoResponse {
     cloneUrl: string;
     installationId: number;
     lastProcessedCommit: string | null;
+    language: string | null;
     createdAt: Date;
     updatedAt: Date;
 }

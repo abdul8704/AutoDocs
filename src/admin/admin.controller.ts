@@ -70,3 +70,9 @@ export const getAdminMasterStatsController = async (_req: Request, res: Response
     const data = await adminService.getAdminMasterStats();
     res.status(200).json({ success: true, ...data });
 };
+
+export const promoteUserToAdminController = async (req: Request, res: Response) => {
+    const userId = req.params.userId as string;
+    const user = await adminService.promoteUserToAdmin(userId);
+    res.status(200).json({ success: true, message: `User ${user.email} promoted to ADMIN successfully`, user });
+};

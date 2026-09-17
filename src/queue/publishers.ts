@@ -123,8 +123,14 @@ export const publishPushForClassification = async (
  */
 export const publishDocUpdate = async (data: DocUpdateJobData) => {
   const commitTag = data.currentCommitSha || data.afterSha || data.docJobId;
+  const jobId = `docgen-${data.repoId}-${commitTag}`;
+  const existingJob = await docGenQueue.getJob(jobId);
+  if (existingJob) {
+    await existingJob.remove();
+  }
+  console.log(`[docGenQueue] Enqueued job ${jobId} for repo ${data.repoId}`);
   return await docGenQueue.add("generate-doc-update", data, {
-    jobId: `docgen-${data.repoId}-${commitTag}`,
+    jobId,
   });
 };
 

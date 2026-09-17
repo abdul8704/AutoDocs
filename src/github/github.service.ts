@@ -27,10 +27,24 @@ let git: SimpleGit = simpleGit();
 
 export const fetchLocalChanges = async (repoId: string, ref: string) => {
     git = simpleGit(constructPath(repoId));
-    const branch = ref.replace("refs/heads/", "");
+    const branch = ref ? ref.replace("refs/heads/", "") : "";
 
-    await git.fetch(["origin", branch]);
-    console.log("local changes downloaded successfully")
+    try {
+        if (branch) {
+            await git.fetch(["origin", branch]);
+        } else {
+            await git.fetch(["origin"]);
+        }
+    } catch (fetchErr) {
+        console.warn(`[fetchLocalChanges] Specific fetch for '${branch}' failed, falling back to git fetch origin:`, fetchErr);
+        try {
+            await git.fetch(["origin"]);
+        } catch (fallbackErr) {
+            console.error("[fetchLocalChanges] Fallback git fetch origin failed:", fallbackErr);
+            throw fallbackErr;
+        }
+    }
+    console.log("local changes downloaded successfully");
 }
 
 export const pullChanges = async (repoPath: string) => {
@@ -182,7 +196,7 @@ export const githubWebhookHandlerService = async (payload: { repository: { id: n
                 installationId: importedRepo.installation_id,
                 afterSha: payload.after,
                 beforeSha: payload.before,
-                defaultBranch: "main",
+                defaultBranch: payload.repository.default_branch || "main",
                 userId: importedRepo.user.id,
             };
 
@@ -268,9 +282,32 @@ export const writeFilesAndCommit = async (
 
     await git.remote(['set-url', 'origin', authenticatedUrl]);
 
-    // Push the new branch to the remote
-    await git.push('origin', branchName);
+    // Force push the branch to remote to ensure clean consolidated updates
+    try {
+        await git.push(['origin', branchName, '--force']);
+    } catch (pushErr) {
+        console.warn(`[writeFilesAndCommit] Force push failed, falling back to standard push:`, pushErr);
+        await git.push('origin', branchName);
+    }
 }
+
+export const getDefaultBranch = async (repoPath: string): Promise<string> => {
+    try {
+        const git = simpleGit(repoPath);
+        const symbolicRef = await git.raw(["symbolic-ref", "refs/remotes/origin/HEAD"]);
+        const branch = symbolicRef.trim().replace(/^refs\/remotes\/origin\//, "");
+        if (branch) return branch;
+    } catch {
+        try {
+            const git = simpleGit(repoPath);
+            const summary = await git.branchLocal();
+            if (summary.current) return summary.current;
+        } catch {
+            // ignore
+        }
+    }
+    return "main";
+};
 
 export const openPR = async (
     owner: string,
@@ -279,10 +316,65 @@ export const openPR = async (
     body: string,
     head: string,
     base: string,
-    installationId: number
+    installationId: number,
+    repoId?: string
 ) => {
     const octokit = await githubAppService.getInstallationOctokit(installationId);
-    
+
+    // 1. Check for existing open PRs raised by our app for this head branch
+    try {
+        const existingPrs = await octokit.rest.pulls.list({
+            owner,
+            repo,
+            head: `${owner}:${head}`,
+            state: "open"
+        });
+
+        for (const existingPr of existingPrs.data) {
+            console.log(`[openPR] Closing existing open PR #${existingPr.number} in repo ${owner}/${repo} to replace with a new consolidated PR...`);
+            try {
+                await octokit.rest.pulls.update({
+                    owner,
+                    repo,
+                    pull_number: existingPr.number,
+                    state: "closed"
+                });
+                console.log(`[openPR] Successfully closed PR #${existingPr.number} on GitHub.`);
+            } catch (closeErr) {
+                console.error(`[openPR] Error closing existing PR #${existingPr.number}:`, closeErr);
+            }
+
+            // Update database records associated with the old PR number
+            await prisma.docsUpdateJob.updateMany({
+                where: {
+                    pullRequestId: existingPr.number,
+                    status: "PR_OPEN",
+                },
+                data: {
+                    status: "DROPPED",
+                    errorLog: "Superseded and replaced by a newer pull request.",
+                },
+            }).catch((dbErr) => console.error("[openPR] Failed to update old job status in DB:", dbErr));
+        }
+    } catch (listErr) {
+        console.warn("[openPR] Could not list existing open PRs:", listErr);
+    }
+
+    // 2. Also ensure any existing job for repoId marked PR_OPEN is superseded in DB
+    if (repoId) {
+        await prisma.docsUpdateJob.updateMany({
+            where: {
+                repoId,
+                status: "PR_OPEN",
+            },
+            data: {
+                status: "DROPPED",
+                errorLog: "Superseded and replaced by a newer pull request.",
+            },
+        }).catch((dbErr) => console.error("[openPR] Failed to update existing repo PR_OPEN jobs in DB:", dbErr));
+    }
+
+    // 3. Create the new PR
     try {
         const prResponse = await octokit.rest.pulls.create({
             owner,
@@ -296,26 +388,27 @@ export const openPR = async (
         console.log(`PR successfully created: ${prResponse.data.html_url}`);
         return { prNumber: prResponse.data.number, prLink: prResponse.data.html_url };
     } catch (err: unknown) {
-        // Fallback: If PR already exists for this head branch, update the existing PR
         if (typeof err === "object" && err !== null && "status" in err && (err as { status?: number }).status === 422) {
-            const existingPrs = await octokit.rest.pulls.list({
-                owner,
-                repo,
-                head: `${owner}:${head}`,
-                state: "open"
-            });
+            // Retry with target repository default branch if base branch mismatched
+            try {
+                const repoInfo = await octokit.rest.repos.get({ owner, repo });
+                const actualDefaultBranch = repoInfo.data.default_branch;
 
-            if (existingPrs.data.length > 0) {
-                const existingPr = existingPrs.data[0];
-                await octokit.rest.pulls.update({
-                    owner,
-                    repo,
-                    pull_number: existingPr.number,
-                    title,
-                    body,
-                });
-                console.log(`PR already exists, updated PR #${existingPr.number}: ${existingPr.html_url}`);
-                return { prNumber: existingPr.number, prLink: existingPr.html_url };
+                if (actualDefaultBranch && actualDefaultBranch !== base) {
+                    console.log(`Retrying PR creation with target repository default branch: '${actualDefaultBranch}'`);
+                    const prResponse = await octokit.rest.pulls.create({
+                        owner,
+                        repo,
+                        title,
+                        body,
+                        head,
+                        base: actualDefaultBranch,
+                    });
+                    console.log(`PR successfully created: ${prResponse.data.html_url}`);
+                    return { prNumber: prResponse.data.number, prLink: prResponse.data.html_url };
+                }
+            } catch (retryErr) {
+                console.error("[openPR] Failed to retry PR creation with repo default branch:", retryErr);
             }
         }
         throw err;

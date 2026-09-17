@@ -9,6 +9,7 @@ repoRouter.use(authenticate);
 
 repoRouter.get("/:repoId", asyncHandler(getRepoDetailsController));
 repoRouter.post("/:repoId/trigger", asyncHandler(triggerDocGenController));
+repoRouter.post("/:repoId/generate", asyncHandler(triggerDocGenController));
 repoRouter.get("/:repoId/docs", asyncHandler(getRepoGeneratedDocsController));
 
 export default repoRouter;

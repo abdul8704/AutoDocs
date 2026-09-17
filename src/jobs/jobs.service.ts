@@ -4,6 +4,8 @@ import { JobStatus } from "../pipeline/pipeline.types";
 import { publishFirstTimeImport, publishPushForClassification } from "../queue/publishers";
 import { getAuthenticatedRepoUrl } from "../github/github.app.service";
 import { BillingService } from "../billing/billing.service";
+import { getDefaultBranch } from "../github/github.service";
+import { constructPath } from "../utils/pathHelper.utils";
 
 export interface GetJobsQuery {
     repoId?: string;
@@ -25,14 +27,17 @@ export const getJobsForUser = async (userId: string, query: GetJobsQuery) => {
     };
 
     if (query.repoId) {
-        whereCondition.repoId = query.repoId;
+        whereCondition.OR = [
+            { repoId: query.repoId },
+            { repository: { github_repo_id: query.repoId } },
+        ];
     }
 
     if (query.status) {
         whereCondition.status = query.status;
     }
 
-    const [total, jobs] = await Promise.all([
+    const [total, rawJobs] = await Promise.all([
         prisma.docsUpdateJob.count({ where: whereCondition }),
         prisma.docsUpdateJob.findMany({
             where: whereCondition,
@@ -45,12 +50,29 @@ export const getJobsForUser = async (userId: string, query: GetJobsQuery) => {
                         github_repo_id: true,
                     },
                 },
+                creditLedgers: {
+                    select: {
+                        amount: true,
+                        type: true,
+                    },
+                },
             },
             orderBy: { createdAt: "desc" },
             skip,
             take: limit,
         }),
     ]);
+
+    const jobs = rawJobs.map((job) => {
+        const creditsDeducted = Math.abs(
+            (job.creditLedgers || []).reduce((sum, l) => sum + (l.amount < 0 ? l.amount : 0), 0)
+        );
+        const { creditLedgers, ...rest } = job;
+        return {
+            ...rest,
+            creditsDeducted,
+        };
+    });
 
     return {
         jobs,
@@ -166,8 +188,9 @@ export const retryJob = async (userId: string, jobId: string) => {
     // Verifies job existence and ownership for the logged in user (throws 404 if invalid)
     const job = await getJobById(userId, jobId);
 
-    if (job.status !== "INSUFFICIENT_CREDITS" && job.status !== "FAILED") {
-        throw new HttpError(400, `Cannot retry job with status '${job.status}'. Only jobs with 'INSUFFICIENT_CREDITS' or 'FAILED' status can be retried.`);
+    const retryableStatuses = ["INSUFFICIENT_CREDITS", "FAILED", "DROPPED", "LLM_JUDGE_REJECTED", "QUEUED", "PENDING"];
+    if (!retryableStatuses.includes(job.status)) {
+        throw new HttpError(400, `Cannot retry job with status '${job.status}'.`);
     }
 
     const hasSufficientCredits = await BillingService.hasSufficientBalance(userId, 10);
@@ -187,16 +210,18 @@ export const retryJob = async (userId: string, jobId: string) => {
     });
 
     const repo = updatedJob.repository;
+    const repoPath = constructPath(repo.id);
+    const defaultBranchName = (await getDefaultBranch(repoPath).catch(() => "main")) || "main";
 
     if (updatedJob.triggerCommit) {
         await publishPushForClassification({
             docJobId: updatedJob.id,
-            ref: "refs/heads/main",
+            ref: `refs/heads/${defaultBranchName}`,
             repoId: repo.id,
             installationId: repo.installation_id,
             afterSha: updatedJob.triggerCommit,
             beforeSha: repo.last_processed_commit || "",
-            defaultBranch: "main",
+            defaultBranch: defaultBranchName,
             userId,
         });
     } else {
@@ -207,7 +232,7 @@ export const retryJob = async (userId: string, jobId: string) => {
             githubUrl: authenticatedCloneUrl,
             installationId: repo.installation_id,
             docJobId: updatedJob.id,
-            defaultBranch: "main",
+            defaultBranch: defaultBranchName,
         });
     }
 
@@ -227,4 +252,60 @@ export const getJobsOfRepo = async (repoId: string) => {
             }
         }
     });
-}
+};
+
+export const getJobsStats = async (userId: string) => {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const [creditsAgg, activeRepoHooks, docPRsDelivered, openPRsCount, activeJobsCount, actionRequiredCount] = await Promise.all([
+        prisma.creditLedger.aggregate({
+            where: {
+                userId,
+                type: "USAGE_DEDUCTION",
+                createdAt: { gte: startOfToday },
+            },
+            _sum: {
+                amount: true,
+            },
+        }),
+        prisma.repo.count({
+            where: { user_id: userId },
+        }),
+        prisma.docsUpdateJob.count({
+            where: {
+                repository: { user_id: userId },
+                status: { in: ["PR_OPEN", "COMPLETED", "MERGED"] },
+            },
+        }),
+        prisma.docsUpdateJob.count({
+            where: {
+                repository: { user_id: userId },
+                status: "PR_OPEN",
+            },
+        }),
+        prisma.docsUpdateJob.count({
+            where: {
+                repository: { user_id: userId },
+                status: { in: ["PENDING", "CLONING", "SCANING", "GENERATING", "WAITING_LLM_JUDGE"] },
+            },
+        }),
+        prisma.docsUpdateJob.count({
+            where: {
+                repository: { user_id: userId },
+                status: { in: ["FAILED", "INSUFFICIENT_CREDITS"] },
+            },
+        }),
+    ]);
+
+    const creditsBurnedToday = Math.abs(creditsAgg._sum.amount || 0);
+
+    return {
+        creditsBurnedToday,
+        activeRepoHooks,
+        docPRsDelivered,
+        openPRsCount,
+        activeJobsCount,
+        actionRequiredCount,
+    };
+};

@@ -22,7 +22,7 @@ export const getTaskPromptController = async (req: Request, res: Response) => {
 };
 
 export const addPromptController = async (req: Request, res: Response) => {
-    const { promptKey, version, content } = req.body || {};
+    const { promptKey, version, content, promptTitle, title } = req.body || {};
 
     if (!promptKey || !version || !content) {
         return res.status(400).json({
@@ -30,12 +30,12 @@ export const addPromptController = async (req: Request, res: Response) => {
         });
     }
 
-    const prompts = await addPrompt(promptKey, version, content);
+    const prompts = await addPrompt(promptKey, version, content, promptTitle || title);
     return res.status(200).json(prompts);
 };
 
 export const deletePromptController = async (req: Request, res: Response) => {
-    const { promptId } = req.params;
+    const promptId = req.params.promptId || req.body?.promptId;
 
     if (!promptId || typeof promptId !== "string" || !promptId.trim()) {
         return res.status(400).json({ error: "Missing required parameter: 'promptId'" });
@@ -47,7 +47,7 @@ export const deletePromptController = async (req: Request, res: Response) => {
 
 export const updatePromptController = async (req: Request, res: Response) => {
     const promptId = req.params.promptId || req.body?.promptId;
-    const { version, content } = req.body || {};
+    const { version, content, promptTitle, title } = req.body || {};
 
     if (!promptId || !version || !content) {
         return res.status(400).json({
@@ -55,7 +55,7 @@ export const updatePromptController = async (req: Request, res: Response) => {
         });
     }
 
-    const prompts = await updatePrompt(promptId, version, content);
+    const prompts = await updatePrompt(promptId, version, content, promptTitle || title);
     return res.status(200).json(prompts);
 };
 

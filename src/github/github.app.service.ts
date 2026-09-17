@@ -70,6 +70,7 @@ export const getAllRepos = async (installationId: number) => {
     cloneUrl: repo.clone_url,
     isPrivate: repo.private,
     defaultBranch: repo.default_branch,
+    language: repo.language ?? null,
   }));
 
   return repos;
@@ -111,8 +112,19 @@ export const getAllReposForUser = async (userId: string) => {
     throw new HttpError(400, "GitHub App is not installed for this user yet");
   }
 
-  return getAllRepos(user.githubInstallationId);
-}
+  const allRepos = await getAllRepos(user.githubInstallationId);
+  const importedRepos = await prisma.repo.findMany({
+    where: { user_id: userId },
+    select: { github_repo_id: true, full_name: true },
+  });
+
+  const importedSet = new Set(importedRepos.map((r) => r.github_repo_id));
+  const importedNameSet = new Set(importedRepos.map((r) => (r.full_name?.toLowerCase() || '')));
+
+  return allRepos.filter(
+    (r) => !importedSet.has(r.githubRepoId) && !importedNameSet.has((r.name || '').toLowerCase())
+  );
+};
 
 export const importThisRepo = async (userId: string, githubRepoId: string, name: string, cloneUrl: string, installation_id?: number) => {
   const user = await prisma.user.findUnique({
@@ -127,7 +139,16 @@ export const importThisRepo = async (userId: string, githubRepoId: string, name:
     throw new HttpError(400, "GitHub App is not installed for this user yet");
   }
 
-  const headSha = await getHeadSha(Number(githubRepoId), effectiveInstallationId);
+  const numericRepoId = Number(githubRepoId);
+  let headSha = "";
+
+  if (!Number.isNaN(numericRepoId) && numericRepoId > 0) {
+    try {
+      headSha = await getHeadSha(numericRepoId, effectiveInstallationId);
+    } catch (err) {
+      console.warn(`[Import] getHeadSha by numeric ID ${numericRepoId} failed, falling back to name/url lookup:`, err);
+    }
+  }
 
   const url = new URL(cloneUrl);
   const installationToken: string = await getInstallationToken(effectiveInstallationId);
@@ -136,6 +157,23 @@ export const importThisRepo = async (userId: string, githubRepoId: string, name:
   const parts = url.pathname.split('/');
   const owner = parts[1];
   const repo = parts[2].replace('.git', '');
+
+  let repoLanguage: string | null = null;
+  try {
+    const octokit = await getInstallationOctokit(effectiveInstallationId);
+    const { data: repoData } = await octokit.rest.repos.get({ owner, repo });
+    repoLanguage = repoData.language || null;
+    if (!headSha) {
+      const { data: commitData } = await octokit.rest.repos.getCommit({
+        owner,
+        repo,
+        ref: repoData.default_branch,
+      });
+      headSha = commitData.sha;
+    }
+  } catch (err) {
+    console.warn("[Import] Failed to fetch repo metadata from Octokit:", err);
+  }
 
   const repoSize = await getRepoSizeOctokit(owner, repo, installationToken);
   console.log(headSha);
@@ -150,6 +188,7 @@ export const importThisRepo = async (userId: string, githubRepoId: string, name:
       installation_id: effectiveInstallationId,
       clone_url: cloneUrl,
       full_name: name,
+      language: repoLanguage,
       last_processed_commit: headSha
     },
     create: {
@@ -157,6 +196,7 @@ export const importThisRepo = async (userId: string, githubRepoId: string, name:
       github_repo_id: githubRepoId,
       full_name: name,
       clone_url: cloneUrl,
+      language: repoLanguage,
       installation_id: effectiveInstallationId,
       last_processed_commit: headSha
     },
@@ -196,21 +236,62 @@ export const importThisRepo = async (userId: string, githubRepoId: string, name:
 export const getImportedRepos = async (userId: string) => {
   const repos = await prisma.repo.findMany({
     where: { user_id: userId },
+    include: {
+      jobs: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+      },
+      _count: {
+        select: { jobs: true },
+      },
+    },
     orderBy: { created_at: "desc" },
   });
 
-  const importedRepos: ImportedRepoResponse[] = repos.map((repo) => ({
-    id: repo.id,
-    githubRepoId: repo.github_repo_id,
-    name: repo.full_name,
-    cloneUrl: repo.clone_url,
-    installationId: repo.installation_id,
-    lastProcessedCommit: repo.last_processed_commit,
-    createdAt: repo.created_at,
-    updatedAt: repo.updated_at,
-  }));
+  const reposWithLanguage = await Promise.all(
+    repos.map(async (repo) => {
+      let lang = repo.language;
+      if (!lang && repo.full_name) {
+        try {
+          const parts = repo.full_name.split('/');
+          if (parts.length === 2) {
+            const octokit = await getInstallationOctokit(repo.installation_id);
+            const { data: repoData } = await octokit.rest.repos.get({
+              owner: parts[0],
+              repo: parts[1],
+            });
+            if (repoData.language) {
+              lang = repoData.language;
+              prisma.repo
+                .update({
+                  where: { id: repo.id },
+                  data: { language: lang },
+                })
+                .catch(() => {});
+            }
+          }
+        } catch (e) {
+          // fallback silently
+        }
+      }
 
-  return importedRepos;
+      return {
+        id: repo.id,
+        github_repo_id: repo.github_repo_id,
+        full_name: repo.full_name,
+        clone_url: repo.clone_url,
+        installation_id: repo.installation_id,
+        last_processed_commit: repo.last_processed_commit,
+        language: lang || null,
+        created_at: repo.created_at,
+        updated_at: repo.updated_at,
+        jobs: repo.jobs,
+        _count: repo._count,
+      };
+    })
+  );
+
+  return reposWithLanguage;
 }
 
 export const getAuthenticatedRepoUrl = async (rawCloneUrl: string, installationId: number) => {

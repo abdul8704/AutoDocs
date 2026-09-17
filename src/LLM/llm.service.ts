@@ -67,7 +67,9 @@ export class LLMService {
       console.log("deducting credits ", creditAmount, " for user ", userId, " for task ", taskKey);
       
       try {
-        await BillingService.deductCredit(userId, creditAmount, jobId, "Deducted for " + taskKey + " on " + new Date().toISOString());
+        const d = new Date();
+        const formattedNow = `${d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}, ${d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}`;
+        await BillingService.deductCredit(userId, creditAmount, jobId, `Deducted for ${taskKey} on ${formattedNow}`);
       } catch (billingErr) {
         console.error("[LLMService] Failed to deduct credits:", billingErr);
       }

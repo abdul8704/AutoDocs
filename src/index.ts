@@ -51,6 +51,8 @@ app.get("/health", (_req, res) => {
     res.send("yarupa nee")
 });
 
+app.use("/api/github", githubAppRouter);
+
 // Everything registered below this line requires a valid access token.
 app.use(authenticate);
 
@@ -60,7 +62,6 @@ app.use("/api/jobs", jobsRouter);
 app.use("/api/repos", repoRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/admin", adminRouter);
-app.use("/api/github", githubAppRouter);
 app.use("/api/llm-config", llmConfigRouter);
 app.use("/api/prompts", promptRouter);
 app.use("/api/models", modelRouter);

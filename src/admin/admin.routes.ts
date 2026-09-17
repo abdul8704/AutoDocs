@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { asyncHandler } from "../utils/asyncHandler.utils";
 import { authenticate } from "../auth/auth.middleware";
+import { requireAdmin } from "../middleware/rbac.middleware";
 import {
     getAllUsersAdminController,
     getUserDetailsAdminController,
@@ -10,17 +11,19 @@ import {
     getLLMLogsAdminController,
     getLLMStatsAdminController,
     getAdminMasterStatsController,
+    promoteUserToAdminController,
 } from "./admin.controller";
 
 const adminRouter = Router();
 
-// All admin routes require JWT authentication
-adminRouter.use(authenticate);
+// All admin routes require JWT authentication and ADMIN role
+adminRouter.use(authenticate, requireAdmin);
 
 // User Insights & Management
 adminRouter.get("/users", asyncHandler(getAllUsersAdminController));
 adminRouter.get("/users/:userId", asyncHandler(getUserDetailsAdminController));
 adminRouter.patch("/users/:userId/plan", asyncHandler(updateUserPlanAdminController));
+adminRouter.post("/users/:userId/promote", asyncHandler(promoteUserToAdminController));
 
 // Repos & Jobs Audit
 adminRouter.get("/repos", asyncHandler(getAllReposAdminController));

@@ -218,15 +218,61 @@ export class BillingService {
         })
     };
 
-    static async getLedgerSummary(userId: string, limit: number = 10, offset: number = 0) {
-        return await prisma.creditLedger.findMany({
+    static async getLedgerSummary(userId: string, limit: number = 50, offset: number = 0) {
+        const rawLedger = await prisma.creditLedger.findMany({
             where: {
                 userId
+            },
+            include: {
+                job: {
+                    select: {
+                        repository: {
+                            select: {
+                                full_name: true
+                            }
+                        }
+                    }
+                }
             },
             take: limit,
             skip: offset,
             orderBy: { createdAt: 'desc' }
-        })
+        });
+
+        return rawLedger.map(item => {
+            const dateObj = new Date(item.createdAt);
+            const transactionDate = dateObj.toLocaleDateString("en-GB", {
+                day: "2-digit",
+                month: "2-digit",
+                year: "numeric"
+            }); // "14/09/2026"
+            const transactionTime = dateObj.toLocaleTimeString("en-US", {
+                hour: "numeric",
+                minute: "2-digit",
+                hour12: true,
+                timeZone: "Asia/Kolkata"
+            }) + " IST"; // "5:09 PM IST"
+
+            let repoName = item.job?.repository?.full_name;
+            if ((!repoName || repoName === "-") && item.description) {
+                const match = item.description.match(/Deducted for (.+?) on/i) || item.description.match(/for (.+?)(?: on|$)/i);
+                if (match && match[1]) {
+                    repoName = match[1].trim();
+                }
+            }
+
+            return {
+                id: item.id,
+                amount: item.amount,
+                type: item.type,
+                description: item.description,
+                createdAt: item.createdAt,
+                transactionDate,
+                transactionTime,
+                repoName: repoName || "-",
+                jobId: item.jobId,
+            };
+        });
     }
 
     static async getCurrentBalance(userId: string) {
@@ -265,22 +311,93 @@ export class BillingService {
     }
 
     static async getDashboardSummary(userId: string) {
-        const [requests, balanceRecord, ledger] = await Promise.all([
+        const now = new Date();
+        const startOfToday = new Date(now);
+        startOfToday.setHours(0, 0, 0, 0);
+
+        const sevenDaysAgo = new Date(now);
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        sevenDaysAgo.setHours(0, 0, 0, 0);
+
+        const ninetyDaysAgo = new Date(now);
+        ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+        ninetyDaysAgo.setHours(0, 0, 0, 0);
+
+        const [requests, balanceRecord, ledger, usageTodayAgg, usage7dAgg, usageEntriesAllTime] = await Promise.all([
             this.getUserRequests(userId),
             this.getCurrentBalance(userId),
-            this.getLedgerSummary(userId)
+            this.getLedgerSummary(userId, 50, 0),
+            prisma.creditLedger.aggregate({
+                where: {
+                    userId,
+                    type: "USAGE_DEDUCTION",
+                    createdAt: { gte: startOfToday },
+                },
+                _sum: { amount: true },
+            }),
+            prisma.creditLedger.aggregate({
+                where: {
+                    userId,
+                    type: "USAGE_DEDUCTION",
+                    createdAt: { gte: sevenDaysAgo },
+                },
+                _sum: { amount: true },
+            }),
+            prisma.creditLedger.findMany({
+                where: {
+                    userId,
+                    type: "USAGE_DEDUCTION",
+                    createdAt: { gte: ninetyDaysAgo },
+                },
+                select: {
+                    amount: true,
+                    createdAt: true,
+                },
+                orderBy: { createdAt: "asc" },
+            }),
         ]);
+
         const currentBalance = balanceRecord?.balance || 0;
+        const creditsUsedToday = Math.abs(usageTodayAgg._sum.amount || 0);
+        const creditsUsed7d = Math.abs(usage7dAgg._sum.amount || 0);
+
+        const buildSeries = (days: number) => {
+            const series: Array<{ date: string; fullDate: string; credits: number }> = [];
+            const dateMap: Record<string, number> = {};
+
+            for (let i = days - 1; i >= 0; i--) {
+                const d = new Date(now);
+                d.setDate(d.getDate() - i);
+                const isoDate = d.toISOString().split("T")[0];
+                const displayDate = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+                dateMap[isoDate] = 0;
+                series.push({ date: displayDate, fullDate: isoDate, credits: 0 });
+            }
+
+            usageEntriesAllTime.forEach(e => {
+                const isoDate = new Date(e.createdAt).toISOString().split("T")[0];
+                if (dateMap[isoDate] !== undefined) {
+                    dateMap[isoDate] += Math.abs(e.amount);
+                }
+            });
+
+            return series.map(s => ({
+                ...s,
+                credits: dateMap[s.fullDate] || 0,
+            }));
+        };
+
         return {
             balance: {
                 current: currentBalance,
                 tier: "FREE",
                 monthlyCap: 100,
                 usedMonthly: Math.min(100, 100 - currentBalance),
-                avgCostPerPull: 0.42,
-                burnRate7d: 12,
-                autoRecharge: false,
-                resetDate: "2026-10-01",
+                creditsUsedToday,
+                creditsUsed7d,
+                history7d: buildSeries(7),
+                history28d: buildSeries(28),
+                historyAllTime: buildSeries(90),
             },
             requests,
             ledger,

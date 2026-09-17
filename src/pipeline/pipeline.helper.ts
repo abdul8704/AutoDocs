@@ -4,8 +4,10 @@ import { FileRecord, JobStatus } from "./pipeline.types"
 import * as fs from "fs";
 import { encoding_for_model, get_encoding, Tiktoken, TiktokenModel } from "tiktoken";
 
+import { LLMConfigService } from "../LLM/config/llm.config.service";
+
 export const isCompatibleForTinyRepo = async (_git_ls: string[], codeFiles: FileRecord[], intentFiles: FileRecord[], others: FileRecord[], repoPath: string) => {
-    const config = await prisma.lLMTaskConfig.findUnique({
+    let config = await prisma.lLMTaskConfig.findUnique({
         where: {
             taskKey: "tinyRepo"
         },
@@ -16,14 +18,24 @@ export const isCompatibleForTinyRepo = async (_git_ls: string[], codeFiles: File
     });
 
     if (!config) {
-        throw new Error("Tiny repo config not found");
+        await LLMConfigService.ensureLLMConfigsExist();
+        config = await prisma.lLMTaskConfig.findUnique({
+            where: {
+                taskKey: "tinyRepo"
+            },
+            include: {
+                model: true,
+                prompt: true
+            }
+        });
     }
 
-    const contextWindow: number = config.model.contextWindow || 0;
+    const contextWindow: number = config?.model?.contextWindow || 1048576;
+    const modelName: string = config?.model?.modelName || "gemini-2.5-flash";
 
-    const totalInputToken = estimateToken(codeFiles, config.model.modelName, repoPath) +
-        estimateToken(intentFiles, config.model.modelName, repoPath) +
-        estimateToken(others, config.model.modelName, repoPath);
+    const totalInputToken = estimateToken(codeFiles, modelName, repoPath) +
+        estimateToken(intentFiles, modelName, repoPath) +
+        estimateToken(others, modelName, repoPath);
 
     return totalInputToken + 1000 <= contextWindow; // estimate system prompt to be 1000 tokens. TO_DO: fix a better limit
 }
@@ -71,14 +83,14 @@ export const packFilesByName = (filePaths: string[], repoPath: string) => {
     return packedFiles;
 }
 
-export const updateJobStatus = async (jobId: string, status: JobStatus) => {
+export const updateJobStatus = async (jobId: string, status: JobStatus, errorLog?: string | null) => {
     await prisma.docsUpdateJob.update({
         where: {
             id: jobId
         },
         data: {
             status,
+            ...(errorLog !== undefined ? { errorLog } : {}),
         }
     });
-
 }

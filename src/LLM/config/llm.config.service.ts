@@ -4,11 +4,66 @@ import { LLMRuntimeConfig, LLMTaskType } from "../llm.types";
 export class LLMConfigService {
   private static cache = new Map<LLMTaskType, { providerName: string, config: LLMRuntimeConfig }>();
 
+  static async ensureLLMConfigsExist() {
+    try {
+      let defaultModel = await prisma.modelRoster.findFirst({
+        where: { modelName: 'gemini-2.5-flash', provider: 'gemini' }
+      });
+      if (!defaultModel) {
+        defaultModel = await prisma.modelRoster.create({
+          data: {
+            modelName: 'gemini-2.5-flash',
+            provider: 'gemini',
+            contextWindow: 1048576,
+            inputPrice: 0.075,
+            outputPrice: 0.30,
+          }
+        });
+      }
+
+      let defaultPrompt = await prisma.prompt.findFirst({
+        where: { prompt_key: 'sys.tinyRepo' }
+      });
+      if (!defaultPrompt) {
+        defaultPrompt = await prisma.prompt.create({
+          data: {
+            prompt_key: 'sys.tinyRepo',
+            version: 'v1.0',
+            content: 'You are AutoDocs AI, a senior software architect. Given the codebase diff tree and file list, generate concise, production-grade ARCHITECTURE.md documentation.',
+          }
+        });
+      }
+
+      const tasks: Array<{ taskKey: LLMTaskType; temp: number }> = [
+        { taskKey: 'tinyRepo', temp: 0.2 },
+        { taskKey: 'judge', temp: 0.0 },
+        { taskKey: 'docsGenerator', temp: 0.3 },
+      ];
+
+      for (const t of tasks) {
+        const existing = await prisma.lLMTaskConfig.findUnique({ where: { taskKey: t.taskKey } });
+        if (!existing) {
+          await prisma.lLMTaskConfig.create({
+            data: {
+              taskKey: t.taskKey,
+              modelRosterId: defaultModel.id,
+              promptId: defaultPrompt.id,
+              temperature: t.temp,
+              maxOutputTokens: 4096,
+            }
+          });
+        }
+      }
+    } catch (err) {
+      console.error("[LLMConfigService] ensureLLMConfigsExist failed:", err);
+    }
+  }
+
   static async getTaskConfig(taskKey: LLMTaskType) {
     if (this.cache.has(taskKey))
       return this.cache.get(taskKey)
 
-    const taskConfig = await prisma.lLMTaskConfig.findUnique({
+    let taskConfig = await prisma.lLMTaskConfig.findUnique({
       where: {
         taskKey
       },
@@ -17,6 +72,20 @@ export class LLMConfigService {
         prompt: true
       }
     });
+
+    if (!taskConfig) {
+      await this.ensureLLMConfigsExist();
+      taskConfig = await prisma.lLMTaskConfig.findUnique({
+        where: {
+          taskKey
+        },
+        include: {
+          model: true,
+          prompt: true
+        }
+      });
+    }
+
     if (!taskConfig) {
       throw new Error(`Unable to find taskConfig for ${taskKey}`);
     }
@@ -41,7 +110,22 @@ export class LLMConfigService {
 }
 
 export const getAllConfigs = async () => {
-  return await prisma.lLMTaskConfig.findMany({});
+  let configs = await prisma.lLMTaskConfig.findMany({
+    include: {
+      model: true,
+      prompt: true,
+    }
+  });
+  if (configs.length === 0) {
+    await LLMConfigService.ensureLLMConfigsExist();
+    configs = await prisma.lLMTaskConfig.findMany({
+      include: {
+        model: true,
+        prompt: true,
+      }
+    });
+  }
+  return configs;
 }
 
 export const updateTaskConfig = async (
@@ -72,9 +156,17 @@ export const createTaskConfig = async (
   temperature: number,
   maxOutputTokens: number
 ) => {
-
-  return await prisma.lLMTaskConfig.create({
-    data: {
+  return await prisma.lLMTaskConfig.upsert({
+    where: {
+      taskKey
+    },
+    update: {
+      modelRosterId: modelId,
+      promptId,
+      temperature,
+      maxOutputTokens
+    },
+    create: {
       taskKey,
       modelRosterId: modelId,
       promptId,

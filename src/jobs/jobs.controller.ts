@@ -73,3 +73,10 @@ export const streamJobsTelemetryController = async (req: Request, res: Response)
         res.end();
     });
 };
+
+export const getJobsStatsController = async (req: Request, res: Response) => {
+    const userId = req.user!.id;
+    const stats = await jobsService.getJobsStats(userId);
+    res.status(200).json({ success: true, stats });
+};
+

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '../../auth/auth.middleware';
+import { requireAdmin } from '../../middleware/rbac.middleware';
 import { asyncHandler } from "../../utils/asyncHandler.utils"
 import {
     getLLMConfig,
@@ -11,13 +12,15 @@ import {
 
 const router = Router();
 
-router.get('/', authenticate, asyncHandler(getAllConfigsController));
-router.get('/:taskKey', authenticate, asyncHandler(getLLMConfig));
+router.use(authenticate, requireAdmin);
 
-router.post('/', authenticate, asyncHandler(createTaskConfigController));
+router.get('/', asyncHandler(getAllConfigsController));
+router.get('/:taskKey', asyncHandler(getLLMConfig));
 
-router.put('/', authenticate, asyncHandler(updateLLMConfig));
+router.post('/', asyncHandler(createTaskConfigController));
 
-router.delete('/:taskKey', authenticate, asyncHandler(deleteTaskConfigController));
+router.put('/', asyncHandler(updateLLMConfig));
+
+router.delete('/:taskKey', asyncHandler(deleteTaskConfigController));
 
 export default router;
