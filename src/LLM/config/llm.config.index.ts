@@ -1,3 +1,5 @@
+import { env } from '../../config/env';
+
 export type LLMProviderType = 'gemini' | 'openai' | 'anthropic';
 export type LLMTaskType = 'tinyRepo' | 'judge' | 'docsGenerator' | 'moduleSummary';
 
@@ -12,7 +14,7 @@ export interface TaskLLMConfig {
 
 export const LLM_CONFIG = {
   // Global defaults
-  defaultProvider: (process.env.DEFAULT_LLM_PROVIDER as LLMProviderType) || 'gemini',
+  defaultProvider: (env.DEFAULT_LLM_PROVIDER as LLMProviderType) || 'gemini',
   
   // Specific Task Configurations
   tasks: {
@@ -20,8 +22,8 @@ export const LLM_CONFIG = {
      * 1. Tiny Repo: Needs high context window and speed.
      */
     tinyRepo: {
-      provider: (process.env.TINY_REPO_PROVIDER as LLMProviderType) || 'gemini',
-      model: process.env.TINY_REPO_MODEL || 'gemini-2.5-flash',
+      provider: (env.TINY_REPO_PROVIDER as LLMProviderType) || 'gemini',
+      model: env.TINY_REPO_MODEL || 'gemini-2.5-flash',
       temperature: 0.2,
       thresholdBytes: 2 * 1024 * 1024, // 2MB raw text threshold
       systemInstruction: 'You are a repository analyzer specializing in small-scale codebases.',
@@ -31,8 +33,8 @@ export const LLM_CONFIG = {
      * 2. Judge (Webhook Diff Classifier): Fast, cheap, deterministic classification.
      */
     judge: {
-      provider: (process.env.JUDGE_PROVIDER as LLMProviderType) || 'gemini',
-      model: process.env.JUDGE_MODEL || 'gemini-2.5-flash',
+      provider: (env.JUDGE_PROVIDER as LLMProviderType) || 'gemini',
+      model: env.JUDGE_MODEL || 'gemini-2.5-flash',
       temperature: 0.0, // 0.0 for deterministic boolean/enum decisions
       systemInstruction: 'You are a strict code evaluator analyzing git diffs for doc relevance.',
     },
@@ -41,8 +43,8 @@ export const LLM_CONFIG = {
      * 3. Docs Generator: High reasoning capacity for comprehensive documentation.
      */
     docsGenerator: {
-      provider: (process.env.DOCS_GENERATOR_PROVIDER as LLMProviderType) || 'gemini',
-      model: process.env.DOCS_GENERATOR_MODEL || 'gemini-2.5-pro',
+      provider: (env.DOCS_GENERATOR_PROVIDER as LLMProviderType) || 'gemini',
+      model: env.DOCS_GENERATOR_MODEL || 'gemini-2.5-pro',
       temperature: 0.3,
       systemInstruction: 'You are a technical writer generating accurate, structured developer docs.',
     },

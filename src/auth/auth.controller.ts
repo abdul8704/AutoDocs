@@ -12,7 +12,7 @@ const STATE_COOKIE_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
 
 const refreshCookieOptions = (expires: Date) => ({
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: env.NODE_ENV === "production",
     sameSite: "lax" as const,
     path: "/",
     expires,
@@ -20,7 +20,7 @@ const refreshCookieOptions = (expires: Date) => ({
 
 const stateCookieOptions = () => ({
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: env.NODE_ENV === "production",
     sameSite: "lax" as const,
     path: "/",
     maxAge: STATE_COOKIE_MAX_AGE_MS,

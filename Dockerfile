@@ -13,6 +13,7 @@ RUN npm install
 COPY . .
 COPY docker-entrypoint.sh .
 
+RUN npx prisma generate
 RUN chmod +x docker-entrypoint.sh
 RUN npm run build
 

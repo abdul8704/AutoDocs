@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import bcrypt from "bcrypt";
 import prisma from "../prisma/prisma";
+import { env } from "../config/env";
 import {
     generateAccessToken,
     generateRefreshToken,
@@ -15,7 +16,7 @@ const BCRYPT_ROUNDS = 10;
 // tied to the `githubId` column in the schema - a future Google provider would need
 // its own equivalent (e.g. a `googleId` column) and lookup/creation function.
 export const findOrCreateGithubUser = async (profile: OAuthProfile) => {
-    const adminEmail = (process.env.ADMIN_EMAIL || process.env.ADMIN_EMAILS)?.trim().toLowerCase();
+    const adminEmail = (env.ADMIN_EMAIL || env.ADMIN_EMAILS)?.trim().toLowerCase();
     const userEmail = profile.email?.trim().toLowerCase();
     const isAdminEmailMatch = Boolean(adminEmail && userEmail && adminEmail === userEmail);
 
