@@ -6,15 +6,17 @@ services:
       dockerfile: Dockerfile
     restart: always
     ports:
-      # Bind strictly to EC2 host loopback so only Nginx can proxy to it
       - "127.0.0.1:${PORT:-5000}:5000"
     env_file:
       - .env
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      REDIS_HOST: redis
+      # Points to the container_name 'shared-postgres'
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@shared-postgres:5432/${POSTGRES_DB}
+      REDIS_HOST: shared-redis
       REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # If using redis URLs: redis://:${REDIS_PASSWORD}@shared-redis:6379/0
     command: sh -c "npx prisma migrate deploy && npm start"
     depends_on:
       postgres:
@@ -22,15 +24,12 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - backend
+      - shared_services
 
   postgres:
-    container_name: autodocs-postgres
+    container_name: shared-postgres
     image: postgres:17-alpine
     restart: always
-    # Leave published to 127.0.0.1 only if using SSH tunneling for database GUIs
-    ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -43,29 +42,27 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - backend
+      - shared_services
 
   redis:
-    container_name: autodocs-redis
+    container_name: shared-redis
     image: redis:8-alpine
     restart: always
-    command: redis-server --appendonly yes
-    ports:
-      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
     networks:
-      - backend
+      - shared_services
 
 volumes:
   postgres-data:
   redis-data:
 
 networks:
-  backend:
-    driver: bridge
+  shared_services:
+    external: true
