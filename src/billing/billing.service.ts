@@ -1,4 +1,4 @@
-import { Prisma } from "../generated/prisma/client";
+import { Prisma } from "@prisma/client";
 import prisma from "../prisma/prisma"
 import { LedgerType, RequestStatus } from "./billing.types";
 
