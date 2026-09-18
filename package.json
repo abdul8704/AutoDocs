@@ -8,7 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "client:dev": "npm --prefix client run dev",
     "client:build": "npm --prefix client run build",
-    "build": "tsc",
+    "build": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc",
     "start": "node dist/index.js"
   },
   "keywords": [],

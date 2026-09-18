@@ -5,3 +5,5 @@ dist
 .gitignore
 .vscode
 .env.prod
+src/generated
+generated
