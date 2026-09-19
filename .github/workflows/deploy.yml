@@ -5,18 +5,35 @@ on:
     branches:
       - main
 
+  workflow_dispatch:
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Verify SSH key
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          printf '%s\n' "$SSH_KEY" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+
+          echo "SSH key fingerprint:"
+          ssh-keygen -y -f /tmp/deploy_key | ssh-keygen -lf -
+
+          rm -f /tmp/deploy_key
+
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
+
           script: |
+            set -e
+
             cd ~/apps/AutoDocs
 
             echo "Pulling latest changes..."
