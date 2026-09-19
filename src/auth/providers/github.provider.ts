@@ -10,7 +10,7 @@ import { OAuthProfile } from "./provider.types";
 export const getGithubAuthUrl = (state: string): string => {
     const clientId = env.GITHUB_CLIENT_ID || env.GITHUB_APP_CLIENT_ID;
     const redirectUrl = `${env.SERVER_URL}/auth/github/callback`;
-
+console.log("github oauth ", clientId, redirectUrl);
     const params = new URLSearchParams({
         client_id: clientId,
         redirect_uri: redirectUrl,

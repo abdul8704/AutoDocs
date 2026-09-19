@@ -20,7 +20,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
     
-    command: sh -c "npx prisma migrate deploy && npm run dev"
+    command: sh -c "npx prisma generate && npx prisma migrate deploy && npm run dev"
     
     depends_on:
       postgres:

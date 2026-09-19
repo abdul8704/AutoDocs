@@ -1,5 +1,5 @@
 import simpleGit, { SimpleGit } from "simple-git"
-import fs, { mkdir } from "fs/promises";
+import fs, { mkdir, rm } from "fs/promises";
 import { createPath } from "../utils/pathHelper.utils";
 import { constructPath } from "../utils/pathHelper.utils"
 import prisma from "../prisma/prisma";
@@ -211,37 +211,41 @@ export const deleteRepo = async (userId: string, repoId: string) => {
     // 1. Remove all active, waiting, delayed, paused, or failed BullMQ jobs associated with this repo
     await removeJobsForRepo(repoId);
 
-    const path = constructPath(repoId);
-
-    if (await checkIfRepoExists(path)) {
-        const cleanUpData: CleanupJobData = {
-            repoId,
-            userId,
-            action: "DELETE_REPO"
-        }
-        await publishCleanup(cleanUpData)
-    }
-
+    // 2. Find matching repository record(s)
     const repos = await prisma.repo.findMany({
         where: {
             user_id: userId,
-            github_repo_id: repoId
+            OR: [
+                { id: repoId },
+                { github_repo_id: repoId }
+            ]
         }
     });
 
-    const repoDbIds = repos.map((repo) => repo.id);
-    if (repoDbIds.length > 0) {
-        await prisma.docsUpdateJob.deleteMany({
-            where: {
-                repoId: { in: repoDbIds }
-            }
-        });
+    // 3. Delete local disk copy immediately
+    const rmPromises: Promise<unknown>[] = [];
+    for (const repo of repos) {
+        const pathById = constructPath(repo.id);
+        const pathByGithubId = constructPath(repo.github_repo_id);
+
+        rmPromises.push(
+            rm(pathById, { recursive: true, force: true }).catch(() => null),
+            rm(pathByGithubId, { recursive: true, force: true }).catch(() => null)
+        );
     }
 
+    const directPath = constructPath(repoId);
+    rmPromises.push(rm(directPath, { recursive: true, force: true }).catch(() => null));
+    await Promise.all(rmPromises);
+
+    // 4. Delete from Repo table ONLY (LLMCache, LLMLog, DocsUpdateJob, CreditLedger are retained)
     await prisma.repo.deleteMany({
         where: {
             user_id: userId,
-            github_repo_id: repoId
+            OR: [
+                { id: repoId },
+                { github_repo_id: repoId }
+            ]
         }
     });
 

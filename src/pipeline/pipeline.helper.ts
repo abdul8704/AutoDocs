@@ -31,7 +31,7 @@ export const isCompatibleForTinyRepo = async (_git_ls: string[], codeFiles: File
     }
 
     const contextWindow: number = config?.model?.contextWindow || 1048576;
-    const modelName: string = config?.model?.modelName || "gemini-2.5-flash";
+    const modelName: string = config?.model?.modelName || "gemini-3.6-flash";
 
     const totalInputToken = estimateToken(codeFiles, modelName, repoPath) +
         estimateToken(intentFiles, modelName, repoPath) +

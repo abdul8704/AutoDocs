@@ -38,17 +38,23 @@ export class BillingService {
             }
         }
 
-        // update wallet
+        // update wallet (ensure balance is never negative)
+        const currentWallet = await tx.creditBalance.findUnique({
+            where: { userId }
+        });
+        const currentBalance = currentWallet?.balance ?? 0;
+        const targetBalance = Math.max(0, currentBalance + amount);
+
         const wallet = await tx.creditBalance.upsert({
             where: {
                 userId
             },
             update: {
-                balance: { increment: amount }
+                balance: targetBalance
             },
             create: {
                 userId,
-                balance: Math.max(0, amount)
+                balance: targetBalance
             }
         });
         // write to ledger
@@ -95,14 +101,40 @@ export class BillingService {
         }
     }
 
-    static async hasSufficientBalance(userId: string, minRequired = 1): Promise<boolean> {
+    static async hasSufficientBalance(
+        userId: string, 
+        minRequired = 1,
+        maxAllowedShortfall = 5
+    ): Promise<boolean> {
         const wallet = await prisma.creditBalance.findUnique({
             where: {
                 userId
             }
         });
+        const userBalance = wallet?.balance ?? 0;
+        const shortfall = minRequired - userBalance;
 
-        return (wallet?.balance ?? 0) >= minRequired;
+        return shortfall <= maxAllowedShortfall;
+    }
+
+    static async validateCreditForJob(
+        userId: string,
+        estimatedCredits: number,
+        maxAllowedShortfall = 5
+    ): Promise<boolean> {
+        const wallet = await prisma.creditBalance.findUnique({
+            where: { userId }
+        });
+        const userBalance = wallet?.balance ?? 0;
+        const shortfall = estimatedCredits - userBalance;
+
+        if (shortfall > maxAllowedShortfall) {
+            throw new Error(
+                `Insufficient credit balance. Required estimated: ${estimatedCredits} credits, Available: ${userBalance} credits. Shortfall (${shortfall} credits) exceeds maximum allowed gap of ${maxAllowedShortfall} credits.`
+            );
+        }
+
+        return true;
     }
 
     static async deductCredit(userId: string, amount: number, jobId: string, description: string) {

@@ -120,8 +120,8 @@ model ModelRoster {
 model DocsUpdateJob {
   id String @id @default(uuid())
 
-  repoId     String
-  repository Repo   @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  repoId     String?
+  repository Repo?   @relation(fields: [repoId], references: [id], onDelete: SetNull)
 
   triggerCommit String?   @default("") // the SHA of commit which we are working on  
   status        JobStatus @default(PENDING)
@@ -187,8 +187,8 @@ model LLMCache {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  repoId String
-  repo   Repo   @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  repoId String?
+  repo   Repo?  @relation(fields: [repoId], references: [id], onDelete: SetNull)
 
   taskKey   String
   commitSha String

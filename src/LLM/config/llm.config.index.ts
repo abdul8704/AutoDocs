@@ -15,7 +15,7 @@ export interface TaskLLMConfig {
 export const LLM_CONFIG = {
   // Global defaults
   defaultProvider: (env.DEFAULT_LLM_PROVIDER as LLMProviderType) || 'gemini',
-  
+
   // Specific Task Configurations
   tasks: {
     /**
@@ -23,7 +23,7 @@ export const LLM_CONFIG = {
      */
     tinyRepo: {
       provider: (env.TINY_REPO_PROVIDER as LLMProviderType) || 'gemini',
-      model: env.TINY_REPO_MODEL || 'gemini-2.5-flash',
+      model: env.TINY_REPO_MODEL || 'gemini-3.6-flash',
       temperature: 0.2,
       thresholdBytes: 2 * 1024 * 1024, // 2MB raw text threshold
       systemInstruction: 'You are a repository analyzer specializing in small-scale codebases.',
@@ -34,7 +34,7 @@ export const LLM_CONFIG = {
      */
     judge: {
       provider: (env.JUDGE_PROVIDER as LLMProviderType) || 'gemini',
-      model: env.JUDGE_MODEL || 'gemini-2.5-flash',
+      model: env.JUDGE_MODEL || 'gemini-3.6-flash',
       temperature: 0.0, // 0.0 for deterministic boolean/enum decisions
       systemInstruction: 'You are a strict code evaluator analyzing git diffs for doc relevance.',
     },

@@ -161,7 +161,7 @@ export const getJobById = async (userId: string, jobId: string) => {
 
     // Format stdout log lines for terminal UI
     const stdoutLogs = [
-        `[${job.createdAt.toISOString()}] INFO Webhook received: git.push on repo ${job.repository.full_name}`,
+        `[${job.createdAt.toISOString()}] INFO Webhook received: git.push on repo ${job.repository?.full_name || "Unlinked Repository"}`,
         `[${job.createdAt.toISOString()}] INFO Cloned repository at commit ${job.triggerCommit || "HEAD"}`,
         ...llmLogs.map(
             (log) => `[${log.createdAt.toISOString()}] [${log.status}] Task: ${log.taskKey} using ${log.modelName} (${log.durationMs}ms, ${log.promptTokens + log.outputTokens} tokens)`
@@ -210,6 +210,10 @@ export const retryJob = async (userId: string, jobId: string) => {
     });
 
     const repo = updatedJob.repository;
+    if (!repo) {
+        throw new HttpError(400, "Cannot retry job because the underlying repository has been deleted.");
+    }
+
     const repoPath = constructPath(repo.id);
     const defaultBranchName = (await getDefaultBranch(repoPath).catch(() => "main")) || "main";
 

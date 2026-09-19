@@ -1,5 +1,6 @@
 import prisma from "../../prisma/prisma";
 import { LLMRuntimeConfig, LLMTaskType } from "../llm.types";
+import { TINY_REPO_PROMPT, DIFF_JUDGE_PROMPT } from "../llm.constants";
 
 export class LLMConfigService {
   private static cache = new Map<LLMTaskType, { providerName: string, config: LLMRuntimeConfig }>();
@@ -7,37 +8,60 @@ export class LLMConfigService {
   static async ensureLLMConfigsExist() {
     try {
       let defaultModel = await prisma.modelRoster.findFirst({
-        where: { modelName: 'gemini-2.5-flash', provider: 'gemini' }
+        where: { modelName: 'gemini-3.6-flash', provider: 'gemini' }
       });
       if (!defaultModel) {
         defaultModel = await prisma.modelRoster.create({
           data: {
-            modelName: 'gemini-2.5-flash',
+            modelName: 'gemini-3.6-flash',
             provider: 'gemini',
-            contextWindow: 1048576,
-            inputPrice: 0.075,
-            outputPrice: 0.30,
+            contextWindow: 1050000,
+            inputPrice: 1.35,
+            outputPrice: 6.75,
+            cacheRead: 0.075,
+            cacheWrite: 0.75,
+            cacheStorageCostPerHour: 0.5,
           }
         });
       }
 
-      let defaultPrompt = await prisma.prompt.findFirst({
-        where: { prompt_key: 'sys.tinyRepo' }
+      let tinyRepoPrompt = await prisma.prompt.findFirst({
+        where: { prompt_key: 'tiny-repo' }
       });
-      if (!defaultPrompt) {
-        defaultPrompt = await prisma.prompt.create({
+      if (!tinyRepoPrompt) {
+        tinyRepoPrompt = await prisma.prompt.create({
           data: {
-            prompt_key: 'sys.tinyRepo',
+            promptTitle: 'Tiny Repo',
+            prompt_key: 'tiny-repo',
             version: 'v1.0',
-            content: 'You are AutoDocs AI, a senior software architect. Given the codebase diff tree and file list, generate concise, production-grade ARCHITECTURE.md documentation.',
+            content: TINY_REPO_PROMPT,
           }
         });
       }
 
-      const tasks: Array<{ taskKey: LLMTaskType; temp: number }> = [
-        { taskKey: 'tinyRepo', temp: 0.2 },
-        { taskKey: 'judge', temp: 0.0 },
-        { taskKey: 'docsGenerator', temp: 0.3 },
+      let judgePrompt = await prisma.prompt.findFirst({
+        where: { prompt_key: 'diff-judge' }
+      });
+      if (!judgePrompt) {
+        judgePrompt = await prisma.prompt.create({
+          data: {
+            promptTitle: 'Diff Judge',
+            prompt_key: 'diff-judge',
+            version: 'v1.0',
+            content: DIFF_JUDGE_PROMPT,
+          }
+        });
+      }
+
+      const tasks: Array<{
+        taskKey: LLMTaskType;
+        promptId: string;
+        temp: number;
+        maxOutputTokens?: number;
+      }> = [
+        { taskKey: 'tinyRepo', promptId: tinyRepoPrompt.id, temp: 0.2, maxOutputTokens: 14096 },
+        { taskKey: 'judge', promptId: judgePrompt.id, temp: 0.2, maxOutputTokens: 4096 },
+        { taskKey: 'docsGenerator', promptId: tinyRepoPrompt.id, temp: 0.3, maxOutputTokens: 14096 },
       ];
 
       for (const t of tasks) {
@@ -47,9 +71,9 @@ export class LLMConfigService {
             data: {
               taskKey: t.taskKey,
               modelRosterId: defaultModel.id,
-              promptId: defaultPrompt.id,
+              promptId: t.promptId,
               temperature: t.temp,
-              maxOutputTokens: 4096,
+              maxOutputTokens: t.maxOutputTokens,
             }
           });
         }

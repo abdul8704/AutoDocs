@@ -87,3 +87,80 @@ export async function calculateGeminiCost(
   const result = await calculateCost(modelName, promptTokens, cachedTokens, outputTokens);
   return result.tokenCost;
 }
+
+export interface CostEstimateParams {
+  modelName: string;
+  estimatedPromptTokens: number;
+  isCached?: boolean;
+  cacheWriteTokens?: number;
+  estimatedOutputTokens?: number;
+}
+
+export interface CostEstimateResult {
+  estimatedProviderUsdCost: number;
+  estimatedCredits: number;
+  uncachedInputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens: number;
+  estimatedOutputTokens: number;
+}
+
+export async function estimateTaskCostAndCredits(params: CostEstimateParams): Promise<CostEstimateResult> {
+  const {
+    modelName,
+    estimatedPromptTokens,
+    isCached = false,
+    cacheWriteTokens = 0,
+    estimatedOutputTokens = 4000,
+  } = params;
+
+  const cachedTokens = isCached ? estimatedPromptTokens : 0;
+
+  const costResult = await calculateCost(
+    modelName,
+    estimatedPromptTokens,
+    cachedTokens,
+    estimatedOutputTokens,
+    isCached ? 0 : cacheWriteTokens
+  );
+
+  const totalProviderCostUsd = costResult.tokenCost + costResult.cacheWriteCost;
+  const { BillingService } = require('../billing/billing.service');
+  const estimatedCredits = BillingService.providerCostToCredits(totalProviderCostUsd);
+
+  return {
+    estimatedProviderUsdCost: totalProviderCostUsd,
+    estimatedCredits,
+    uncachedInputTokens: costResult.inputTokens,
+    cachedInputTokens: cachedTokens,
+    cacheWriteTokens: isCached ? 0 : cacheWriteTokens,
+    estimatedOutputTokens,
+  };
+}
+
+export async function getEstimatedOutputTokens(taskKey: string): Promise<number> {
+  try {
+    const avgLog = await prisma.lLMLog.aggregate({
+      where: { taskKey, status: "SUCCESS" },
+      _avg: { outputTokens: true }
+    });
+
+    if (avgLog._avg.outputTokens && avgLog._avg.outputTokens > 0) {
+      // Add 20% safety buffer over average historical output
+      return Math.ceil(avgLog._avg.outputTokens * 1.2);
+    }
+  } catch (err) {
+    console.warn("[getEstimatedOutputTokens] Failed to query LLMLog aggregate, falling back to static defaults:", err);
+  }
+
+  // Static fallback defaults based on task response schema
+  switch (taskKey) {
+    case 'judge':
+      return 400;   // Structured verdict JSON ({ verdict: boolean, reasoning: string })
+    case 'tinyRepo':
+    case 'docsGenerator':
+      return 3500;  // Full ARCHITECTURE.md + PR payload
+    default:
+      return 2000;
+  }
+}
