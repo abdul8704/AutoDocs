@@ -12,9 +12,35 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Normalize SSH inputs
+        id: ssh_inputs
+        env:
+          RAW_HOST: ${{ secrets.EC2_HOST }}
+          RAW_USER: ${{ secrets.EC2_USER }}
+          RAW_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          set -euo pipefail
+
+          host="$(printf '%s' "$RAW_HOST" | tr -d '\r\n')"
+          username="$(printf '%s' "$RAW_USER" | tr -d '\r\n' | xargs)"
+          key="$(printf '%s' "$RAW_KEY" | sed 's/\r$//')"
+
+          if [ -z "$host" ] || [ -z "$username" ] || [ -z "$key" ]; then
+            echo "One or more required deploy secrets are empty after normalization." >&2
+            exit 1
+          fi
+
+          {
+            echo "host=$host"
+            echo "username=$username"
+            echo "key<<EOF"
+            printf '%s\n' "$key"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Verify SSH key
         env:
-          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          SSH_KEY: ${{ steps.ssh_inputs.outputs.key }}
         run: |
           printf '%s\n' "$SSH_KEY" > /tmp/deploy_key
           chmod 600 /tmp/deploy_key
@@ -27,9 +53,9 @@ jobs:
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.2.2
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          host: ${{ steps.ssh_inputs.outputs.host }}
+          username: ${{ steps.ssh_inputs.outputs.username }}
+          key: ${{ steps.ssh_inputs.outputs.key }}
 
           script: |
             set -e
