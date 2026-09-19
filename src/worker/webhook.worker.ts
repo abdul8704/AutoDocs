@@ -64,8 +64,17 @@ export const webhookWorker = new Worker<PushClassifyJobData>(
             const { regenerated, prLink } = await handleWebhooks(job.data.userId, job.data.repoId, jobId, repoPath, before, job.data.afterSha, job.data.ref, job.data.installationId, authenticatedCloneUrl);
 
             if(!regenerated) {
+                await prisma.repo.update({
+                    where: { id: job.data.repoId },
+                    data: { last_processed_commit: job.data.afterSha }
+                }).catch(err => console.error("[WebhookWorker] Failed to update last_processed_commit:", err));
                 return;
             }
+
+            await prisma.repo.update({
+                where: { id: job.data.repoId },
+                data: { last_processed_commit: job.data.afterSha }
+            }).catch(err => console.error("[WebhookWorker] Failed to update last_processed_commit:", err));
 
             await BillingService.deductCredit(
                 job.data.userId,

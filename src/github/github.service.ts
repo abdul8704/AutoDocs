@@ -107,9 +107,75 @@ export const checkIfRepoExists = async (pathOrRepoId: string): Promise<boolean> 
         throw err;
     }
 }
-export const evictAllCaches = async (payload: { pull_request?: { number?: number }; repository?: { id?: number | string } }) => {
+export const isDocsOnlyFiles = (files: string[]): boolean => {
+    if (!files || files.length === 0) return false;
+    const docExtensions = ['.md', '.txt', '.rst', '.markdown', '.license'];
+    const docFileNames = ['architecture.md', 'readme.md', 'license', '.gitignore', 'changelog.md', 'contributing.md'];
+
+    return files.every(filePath => {
+        const lower = filePath.toLowerCase().trim();
+        const baseName = path.basename(lower);
+        const ext = path.extname(lower);
+
+        if (docFileNames.includes(baseName)) return true;
+        if (docExtensions.includes(ext)) return true;
+        if (lower.startsWith('docs/') || lower.includes('/docs/')) return true;
+
+        return false;
+    });
+};
+
+export const isBotOrDocsPush = (payload: any): boolean => {
+    // 1. Check sender type or login or pusher name
+    const senderType = payload.sender?.type?.toLowerCase() || '';
+    const senderLogin = payload.sender?.login?.toLowerCase() || '';
+    const pusherName = payload.pusher?.name?.toLowerCase() || '';
+
+    if (senderType === 'bot' || senderLogin.includes('[bot]') || pusherName.includes('[bot]') || senderLogin.includes('aiautodocs')) {
+        return true;
+    }
+
+    // 2. Check head commit or commits author/committer
+    const headAuthor = payload.head_commit?.author?.name?.toLowerCase() || '';
+    const headCommitter = payload.head_commit?.committer?.name?.toLowerCase() || '';
+    const headEmail = payload.head_commit?.author?.email?.toLowerCase() || '';
+
+    if (
+        headAuthor.includes('bot') ||
+        headCommitter.includes('bot') ||
+        headEmail.includes('bot') ||
+        headAuthor.includes('aiautodocs') ||
+        headAuthor.includes('my ai docs bot')
+    ) {
+        return true;
+    }
+
+    // 3. Collect all modified, added, and removed files across all commits in push
+    const allChangedFiles: string[] = [];
+    if (Array.isArray(payload.commits)) {
+        for (const commit of payload.commits) {
+            if (Array.isArray(commit.added)) allChangedFiles.push(...commit.added);
+            if (Array.isArray(commit.modified)) allChangedFiles.push(...commit.modified);
+            if (Array.isArray(commit.removed)) allChangedFiles.push(...commit.removed);
+        }
+    } else if (payload.head_commit) {
+        if (Array.isArray(payload.head_commit.added)) allChangedFiles.push(...payload.head_commit.added);
+        if (Array.isArray(payload.head_commit.modified)) allChangedFiles.push(...payload.head_commit.modified);
+        if (Array.isArray(payload.head_commit.removed)) allChangedFiles.push(...payload.head_commit.removed);
+    }
+
+    if (allChangedFiles.length > 0 && isDocsOnlyFiles(allChangedFiles)) {
+        console.log(`[Webhook] Push event consists purely of documentation/meta files: ${allChangedFiles.join(', ')}`);
+        return true;
+    }
+
+    return false;
+};
+
+export const evictAllCaches = async (payload: { pull_request?: { number?: number; merge_commit_sha?: string; head?: { sha?: string } }; repository?: { id?: number | string } }) => {
     const prNumber = payload.pull_request?.number;
     const githubRepoId = payload.repository?.id?.toString();
+    const mergeSha = payload.pull_request?.merge_commit_sha || payload.pull_request?.head?.sha;
 
     if (prNumber) {
         const latestPR = await prisma.docsUpdateJob.findFirst({
@@ -145,67 +211,103 @@ export const evictAllCaches = async (payload: { pull_request?: { number?: number
         });
 
         if (repo) {
+            if (mergeSha) {
+                await prisma.repo.update({
+                    where: { id: repo.id },
+                    data: { last_processed_commit: mergeSha }
+                });
+                console.log(`[evictAllCaches] Updated repo ${repo.id} last_processed_commit to merged SHA: ${mergeSha}`);
+            }
             await cache.evictCache(repo.user.id, repo.id, "tinyRepo");
         }
     }
 };
 
-export const githubWebhookHandlerService = async (payload: { repository: { id: number | string; default_branch: string; name?: string }; ref: string; after: string; before: string }) => {
-    // check if repo id is there in db
-    const githubRepoId = payload.repository.id.toString();
+export const githubWebhookHandlerService = async (payload: any) => {
+    const githubRepoId = payload.repository?.id?.toString();
+    if (!githubRepoId) return;
+
     const branch = payload.ref; // e.g. "refs/heads/main"
-    const defaultBranch = `refs/heads/${payload.repository.default_branch}`;
+    const targetDefaultBranch = payload.repository.default_branch || "main";
+    const defaultBranch = `refs/heads/${targetDefaultBranch}`;
 
-    // Only process pushes to the main/default branch
-    if (branch === defaultBranch) {
-        // has the user imported this repo??
-        const importedRepo = await prisma.repo.findUnique({
-            where: { github_repo_id: githubRepoId },
-            include: { user: true },
-        });
-
-        if (!importedRepo) {
-            // App is installed on this repo, but user hasn't imported it in our dashboard. Ignore!
-            console.log(payload.repository, "is not associated with this user");
-            return;
-        }
-
-        const hasSufficientCredits = await BillingService.hasSufficientBalance(importedRepo.user.id, 10);
-
-        const status = hasSufficientCredits ? "PENDING" : "INSUFFICIENT_CREDITS";
-        const errorLog = hasSufficientCredits ? null : "Insufficient credits (< 10 credits). Request paused until user manually retries.";
-
-        const job = await prisma.docsUpdateJob.create({
-            data: {
-                repoId: importedRepo.id,
-                status,
-                triggerCommit: payload.after,
-                errorLog,
-            }
-        });
-        console.log("Starting webhook job", job.id);
-
-        if (hasSufficientCredits) {
-            console.log(`🚀 Triggering doc update for imported repo: ${importedRepo.user.name}`);
-            console.log(`Commit hash: ${payload.after}`);
-
-            const workerObject: PushClassifyJobData = {
-                docJobId: job.id,
-                ref: payload.ref,
-                repoId: importedRepo.id,
-                installationId: importedRepo.installation_id,
-                afterSha: payload.after,
-                beforeSha: payload.before,
-                defaultBranch: payload.repository.default_branch || "main",
-                userId: importedRepo.user.id,
-            };
-
-            await publishPushForClassification(workerObject);
-        } else {
-            console.log(`[Webhook] User ${importedRepo.user.id} has insufficient credits (< 10). Job ${job.id} created with INSUFFICIENT_CREDITS status.`);
-        }
+    // 1. Only process pushes to the main/default branch
+    if (branch !== defaultBranch) {
+        console.log(`[Webhook] Ignoring push to non-default branch '${branch}' (default is '${defaultBranch}')`);
+        return;
     }
-}
+
+    const importedRepo = await prisma.repo.findUnique({
+        where: { github_repo_id: githubRepoId },
+        include: { user: true },
+    });
+
+    if (!importedRepo) {
+        console.log(payload.repository, "is not associated with this user");
+        return;
+    }
+
+    // 2. Check if this push was caused by a bot or consists purely of docs updates
+    if (isBotOrDocsPush(payload)) {
+        console.log(`[Webhook] Bot push or docs-only push detected for commit ${payload.after}. Updating repo last_processed_commit and skipping job creation.`);
+        if (payload.after) {
+            await prisma.repo.update({
+                where: { id: importedRepo.id },
+                data: { last_processed_commit: payload.after }
+            });
+        }
+        return;
+    }
+
+    // 3. Ignore duplicate pushes if commit was already processed
+    if (payload.after && payload.after === importedRepo.last_processed_commit) {
+        console.log(`[Webhook] Commit ${payload.after} has already been processed for repo ${importedRepo.id}. Skipping.`);
+        return;
+    }
+
+    // 4. Update repository last_processed_commit immediately to user's new push SHA
+    if (payload.after) {
+        await prisma.repo.update({
+            where: { id: importedRepo.id },
+            data: { last_processed_commit: payload.after }
+        });
+    }
+
+    const hasSufficientCredits = await BillingService.hasSufficientBalance(importedRepo.user.id, 10);
+
+    const status = hasSufficientCredits ? "PENDING" : "INSUFFICIENT_CREDITS";
+    const errorLog = hasSufficientCredits ? null : "Insufficient credits (< 10 credits). Request paused until user manually retries.";
+
+    const job = await prisma.docsUpdateJob.create({
+        data: {
+            repoId: importedRepo.id,
+            status,
+            triggerCommit: payload.after,
+            errorLog,
+        }
+    });
+    console.log("Starting webhook job", job.id);
+
+    if (hasSufficientCredits) {
+        console.log(`🚀 Triggering doc update for imported repo: ${importedRepo.user.name}`);
+        console.log(`Commit hash: ${payload.after}`);
+
+        const workerObject: PushClassifyJobData = {
+            docJobId: job.id,
+            ref: payload.ref,
+            repoId: importedRepo.id,
+            installationId: importedRepo.installation_id,
+            afterSha: payload.after,
+            beforeSha: payload.before || importedRepo.last_processed_commit || "",
+            defaultBranch: targetDefaultBranch,
+            userId: importedRepo.user.id,
+        };
+
+        await publishPushForClassification(workerObject);
+    } else {
+        console.log(`[Webhook] User ${importedRepo.user.id} has insufficient credits (< 10). Job ${job.id} created with INSUFFICIENT_CREDITS status.`);
+    }
+};
 
 export const deleteRepo = async (userId: string, repoId: string) => {
     // 1. Remove all active, waiting, delayed, paused, or failed BullMQ jobs associated with this repo

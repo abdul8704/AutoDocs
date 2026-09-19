@@ -32,15 +32,18 @@ export const githubHandler = async (req: Request, res: Response) => {
     const event = req.headers["x-github-event"];
     const payload = req.body;
 
-    if (payload.action === "closed" && payload.pull_request.merged) {
+    if (event === "pull_request" && payload.action === "closed" && payload.pull_request?.merged) {
+        console.log(`[Webhook] Received PR merged event for PR #${payload.pull_request?.number} in repo ${payload.repository?.full_name}`);
         await githubService.evictAllCaches(payload);
-        return res.status(200).json({ success: true, message: "It works " });
+        return res.status(200).json({ success: true, message: "PR merged, caches evicted and repo commit updated" });
     }
 
-    if (event !== "push") // dont bother about anything other than push event
-        return res.status(200)
+    if (event !== "push") {
+        return res.status(200).json({ success: true, message: "Event ignored" });
+    }
+
     await githubService.githubWebhookHandlerService(payload);
-    res.status(200).json({ success: true, message: "It works " });
+    return res.status(200).json({ success: true, message: "Push webhook processed" });
 }
 
 // GitHub redirects here once the user finishes installing our App. We asked GitHub

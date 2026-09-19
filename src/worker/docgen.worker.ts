@@ -90,6 +90,11 @@ export const docGenWorker = new Worker<DocUpdateJobData>(
                 },
             });
 
+            await prisma.repo.update({
+                where: { id: data.repoId },
+                data: { last_processed_commit: data.currentCommitSha }
+            }).catch((dbErr) => console.error("[DocGenWorker] Failed to update repo last_processed_commit:", dbErr));
+
             console.log(`[DocGenWorker] Job ${job.id} completed successfully! PR Link: ${prLink}`);
             return prLink;
         } catch (err: unknown) {
