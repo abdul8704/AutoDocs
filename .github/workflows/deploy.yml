@@ -12,34 +12,48 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Verify SSH key
+      - name: Configure SSH
         env:
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
-          printf '%s\n' "$SSH_KEY" > /tmp/deploy_key
-          chmod 600 /tmp/deploy_key
+          mkdir -p ~/.ssh
 
-          echo "SSH key fingerprint:"
-          ssh-keygen -y -f /tmp/deploy_key | ssh-keygen -lf -
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/ec2_deploy_key
 
-          rm -f /tmp/deploy_key
+          chmod 600 ~/.ssh/ec2_deploy_key
 
-      - name: Deploy to EC2
-        uses: appleboy/ssh-action@v1.2.2
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
 
-          script: |
-            set -e
+      - name: Verify SSH key
+        run: |
+          ssh-keygen -y -f ~/.ssh/ec2_deploy_key | ssh-keygen -lf -
 
-            cd ~/apps/AutoDocs
+      - name: Test SSH connection
+        run: |
+          ssh \
+            -i ~/.ssh/ec2_deploy_key \
+            -o StrictHostKeyChecking=yes \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "echo 'SSH connection successful'"
 
-            echo "Pulling latest changes..."
-            git pull origin main
+      - name: Deploy
+        run: |
+          ssh \
+            -i ~/.ssh/ec2_deploy_key \
+            -o StrictHostKeyChecking=yes \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            '
+              set -e
 
-            echo "Rebuilding and restarting Docker services..."
-            docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+              cd ~/apps/AutoDocs
 
-            echo "Deployment completed successfully!"
+              echo "Pulling latest changes..."
+              git pull origin main
+
+              echo "Rebuilding and restarting Docker services..."
+              docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+
+              echo "Deployment completed successfully!"
+
+              docker compose -f docker-compose.prod.yml ps
+            '
