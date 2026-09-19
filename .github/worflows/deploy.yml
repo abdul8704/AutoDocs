@@ -25,4 +25,4 @@ jobs:
             echo "Rebuilding and restarting Docker services..."
             docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
 
-            echo "Deployment complete!"
+            echo "Deployment completed successfully!"
