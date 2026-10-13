@@ -6,6 +6,7 @@ import { publishFirstTimeImport } from "../queue/publishers";
 import { getDefaultBranch } from "../github/github.service";
 import fs from "fs/promises";
 import path from "path";
+import { touchRepo } from "../storage/diskQuota.service";
 
 export const getRepoDetails = async (userId: string, repoId: string) => {
     const repo = await prisma.repo.findFirst({
@@ -140,6 +141,7 @@ export const getRepoGeneratedDocs = async (userId: string, repoId: string) => {
 
     try {
         const content = await fs.readFile(docFilePath, "utf-8");
+        void touchRepo(repo.id);
         return {
             exists: true,
             filename: "ARCHITECTURE.md",

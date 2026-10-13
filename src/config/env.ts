@@ -39,6 +39,9 @@ const envSchema = z.object({
     POSTGRES_PASSWORD: z.string().optional(),
     POSTGRES_DB: z.string().optional(),
 
+    // Local repo cache (codebases/) disk budget, in GB. LRU clones are evicted to stay under it.
+    CODEBASES_MAX_GB: z.coerce.number().positive().default(10),
+
     // Redis Configuration
     REDIS_HOST: z.string().default("localhost"),
     REDIS_PORT: z.coerce.number().default(6379),

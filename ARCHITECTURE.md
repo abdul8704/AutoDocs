@@ -10,6 +10,7 @@ AutoDocs is an autonomous, commit-driven AI documentation platform that automati
 - **Tiered Diff Filtering & LLM Judging**: Webhook updates undergo a multi-tier evaluation pipeline. Local git diff filtering eliminates non-code/binary edits before delegating to a deterministic LLM classifier (`judge` task) to avoid unnecessary AI generation costs.
 - **Provider & Model Abstraction Layer**: An extensible LLM provider factory (`LLMFactory`) and service layer abstract underlying AI providers (Google Gemini, with dynamic configurations for OpenAI and Anthropic).
 - **Prompt Context Caching**: Utilizes Google GenAI's server-side context caching (`ScopedCacheService`) keyed by `(userId, repoId, taskKey, commitSha)` to avoid re-sending static codebase context on delta updates.
+- **Pre-flight Size & Credit Gating**: Before a repo is queued for LLM generation, `isCompatibleForTinyRepo` tokenizes the full file set (code, intent, **doc**, and other files) against the model's context window, and `estimateAndValidateCredits` prices the exact call about to be made (new content at the input/cache-write rate, previously cached content at the cache-read rate) and rejects the job with `INSUFFICIENT_CREDITS` if the user cannot cover it — before any LLM tokens are spent.
 - **Stateless API & Token-Based Auth**: Stateless Express backend relying on HTTP Bearer JWTs for access tokens and server-stored hashed refresh session tokens (`RefreshSession`) in PostgreSQL.
 
 ### Key Technologies & Dependencies
@@ -311,6 +312,7 @@ AutoDocs uses three specialized BullMQ queues backed by Redis to manage backgrou
 1. **`repo-storage-queue` (Storage Worker)**:
    - **Concurrency**: 2 (Protects disk I/O and network bandwidth).
    - **Jobs**: `clone-first-time` (shallow `--depth=1` clone), `clone-deep-push` (full clone when local cache is missing), `cleanup-repo` (deletes local folder and job records).
+   - **Disk budget** (`src/storage/diskQuota.service.ts`): every clone (here and in the webhook worker) goes through `cloneWithinBudget`. It peeks the repo size via the GitHub API, evicts least-recently-used clones (Redis sorted set `codebases:lru`) until it fits under `CODEBASES_MAX_GB`, clones under an in-process lock, then re-measures. Repos in use (pinned by a running job, or with a non-terminal `DocsUpdateJob`) are never evicted; if space cannot be freed the job fails and BullMQ retries it. Evicted repos are re-cloned on next use.
 2. **`push-classify-queue` (Webhook Worker)**:
    - **Concurrency**: 1 (Processes incoming push webhooks sequentially).
    - **Jobs**: `push-classify-queue` (Verifies credit balance, downloads local changes, runs LLM Judge diff classification).
@@ -391,6 +393,7 @@ sequenceDiagram
 - `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`: Redis cluster connection parameters.
 - `GITHUB_APP_ID`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`: GitHub App credentials.
 - `GEMINI_API_KEY`: Google GenAI API secret key.
+- `CODEBASES_MAX_GB`: Disk budget for the local `codebases/` clone cache (default `10`). Least-recently-used clones are evicted to stay under it.
 - `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`: Secrets for signing JWT access and refresh tokens.
 
 ### Containerized Deployment Architecture

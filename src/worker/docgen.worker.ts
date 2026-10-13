@@ -10,10 +10,11 @@ import { DocsAndPRSchema } from "../LLM/llm.types";
 import { writeFilesAndCommit, openPR, getDefaultBranch } from "../github/github.service";
 import { updateJobStatus } from "../pipeline/pipeline.helper";
 import { BillingService } from "../billing/billing.service";
+import { touchRepo, withRepoPinned } from "../storage/diskQuota.service";
 
 export const docGenWorker = new Worker<DocUpdateJobData>(
     "doc-generation-queue",
-    async (job: Job<DocUpdateJobData>) => {
+    async (job: Job<DocUpdateJobData>) => withRepoPinned(job.data.repoId, async () => {
         console.log(`[DocGenWorker] Processing job '${job.name}' (ID: ${job.id}) for repo ${job.data.repoId}`);
         const data = job.data;
         const jobId = data.docJobId;
@@ -21,6 +22,7 @@ export const docGenWorker = new Worker<DocUpdateJobData>(
 
         try {
             await updateJobStatus(jobId, "GENERATING");
+            await touchRepo(data.repoId);
 
             const git = simpleGit(data.repoPath);
             const { codeFiles, intentFiles, docFiles, others } = await getRepoFiles(git, data.repoPath);
@@ -110,7 +112,7 @@ export const docGenWorker = new Worker<DocUpdateJobData>(
 
             throw err; // Re-throw to allow BullMQ to record failure in Redis
         }
-    },
+    }),
     {
         connection: redisConnection,
         concurrency: 3, // Manage token quota and rate limits

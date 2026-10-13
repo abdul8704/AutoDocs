@@ -1,7 +1,7 @@
 import simpleGit from "simple-git";
 import { getRepoFiles } from "./stages/L1.inventory";
 import { DiffSummary, FileRecord } from "./pipeline.types";
-import { isCompatibleForTinyRepo, updateJobStatus } from "./pipeline.helper";
+import { estimateAndValidateCredits, estimateTokensForText, isCompatibleForTinyRepo, updateJobStatus } from "./pipeline.helper";
 import { LLMService } from "../LLM/llm.service";
 import { mergeChanges } from "../github/github.service";
 import { evaluateDiff, getChangedFilesPacked, getRemovedFiles, llmJudge } from "./stages/L2.judge";
@@ -23,6 +23,7 @@ export const generateFirstTimeDocs = async (
         files,
         codeFiles,
         intentFiles,
+        docFiles,
         others
     }: {
         files: string[];
@@ -33,13 +34,23 @@ export const generateFirstTimeDocs = async (
     } = await getRepoFiles(git, repoPath);
 
     // TODO: if is_compatible = false, don't store in DB.
-    const is_compatible = await isCompatibleForTinyRepo(files, codeFiles, intentFiles, others, repoPath);
+    const { compatible, totalInputToken, modelName } = await isCompatibleForTinyRepo(files, codeFiles, intentFiles, docFiles, others, repoPath);
 
-    if (!is_compatible) {
+    if (!compatible) {
         console.log("[StorageWorker] This repo is big, not suitable for TinyRepo");
         throw new Error("Repo is not compatible for TinyRepo");
     }
     else {
+        // First-time generation always sends the full pack with no existing cache to read from.
+        try {
+            await estimateAndValidateCredits(userId, "tinyRepo", modelName, totalInputToken, 0);
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.log(`[PIPELINE] Estimated credit cost exceeds user's balance for repo ${repoId}: ${message}`);
+            await updateJobStatus(jobId, "INSUFFICIENT_CREDITS", message);
+            return "Job paused: insufficient credits for the estimated LLM cost";
+        }
+
         await updateJobStatus(jobId, "PENDING");
 
         console.log("[PIPELINE] Preprocessing done, delegating doc generation to docGenQueue...");
@@ -111,9 +122,9 @@ export const handleWebhooks = async (
     await mergeChanges(repoPath, ref.replace("refs/heads/", ""));
     console.log("merge, pack files, re run pipeline");
 
-    const is_compatible = await isCompatibleForTinyRepo(files, codeFiles, intentFiles, others, repoPath);
+    const { compatible, totalInputToken, modelName } = await isCompatibleForTinyRepo(files, codeFiles, intentFiles, docFiles, others, repoPath);
 
-    if (!is_compatible) {
+    if (!compatible) {
         console.log("[WebhookWorker] This repo is big, not suitable for TinyRepo");
         throw new Error("Repo is not compatible for TinyRepo");
     }
@@ -122,7 +133,8 @@ export const handleWebhooks = async (
     let promptSuffix: string | undefined = undefined;
 
     // cache not expired, and we can just add and send the new updations
-    if(await llmService.checkCache(userId, repoId, "tinyRepo", beforeSha)){
+    const isCached = await llmService.checkCache(userId, repoId, "tinyRepo", beforeSha);
+    if(isCached){
         const removedFiles: string = await getRemovedFiles(git, beforeSha, afterSha);
         const {
             codeFilesNew,
@@ -151,6 +163,21 @@ export const handleWebhooks = async (
             </other_files>
         </updated_files>
         \n` + CACHE_RECONCILIATION_ENFORCEMENT_PROMPT;
+    }
+
+    // Cache hit: only the (small) delta in promptSuffix is new; the rest is read from
+    // the existing cache at the cheaper cache-read rate. Cache miss: the whole pack is
+    // new content and gets written to a fresh cache this call (see estimateAndValidateCredits).
+    const newContentTokens = isCached && promptSuffix ? estimateTokensForText(promptSuffix, modelName) : totalInputToken;
+    const cachedContentTokens = isCached ? totalInputToken : 0;
+
+    try {
+        await estimateAndValidateCredits(userId, "tinyRepo", modelName, newContentTokens, cachedContentTokens);
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.log(`[PIPELINE] Estimated credit cost exceeds user's balance for repo ${repoId}: ${message}`);
+        await updateJobStatus(jobId, "INSUFFICIENT_CREDITS", message);
+        return { regenerated: false, prLink: null };
     }
 
     console.log("[PIPELINE] Webhook evaluation passed, delegating doc generation to docGenQueue...");

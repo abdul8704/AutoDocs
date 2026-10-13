@@ -10,6 +10,7 @@ import { getAuthenticatedRepoUrl } from "../github/github.app.service";
 
 import { BillingService } from "../billing/billing.service";
 import { publishPushForClassification } from "../queue/publishers";
+import { cloneWithinBudget, touchRepo, withRepoPinned } from "../storage/diskQuota.service";
 
 export const webhookWorker = new Worker<PushClassifyJobData>(
     'push-classify-queue',
@@ -45,46 +46,49 @@ export const webhookWorker = new Worker<PushClassifyJobData>(
         }
 
         try {
-            if (await checkIfRepoExists(repoPath)) {
-                console.log("[WebhookWorker] Repo already exists");
-                await fetchLocalChanges(job.data.repoId, job.data.ref);
-            }
-            else {
-                await updateJobStatus(jobId, "CLONING");
+            // Pinned so a concurrent clone can't evict this repo mid-job.
+            await withRepoPinned(job.data.repoId, async () => {
+                if (await checkIfRepoExists(repoPath)) {
+                    console.log("[WebhookWorker] Repo already exists");
+                    await fetchLocalChanges(job.data.repoId, job.data.ref);
+                    await touchRepo(job.data.repoId);
+                }
+                else {
+                    await updateJobStatus(jobId, "CLONING");
                 
-                console.log("[Push-Classify-Worker] About to clone repo")
-                await cloneNewRepo(authenticatedCloneUrl, repoPath, "deep");
-                console.log("[Push-Classify-Worker] Repo cloned successfully");
-            }
+                    console.log("[Push-Classify-Worker] About to clone repo")
+                    await cloneWithinBudget(job.data.repoId, () => cloneNewRepo(authenticatedCloneUrl, repoPath, "deep"));
+                    console.log("[Push-Classify-Worker] Repo cloned successfully");
+                }
 
-            await updateJobStatus(jobId, "SCANING");
+                await updateJobStatus(jobId, "SCANING");
 
-            const before = repoData.last_processed_commit ?? job.data.beforeSha;
+                const before = repoData.last_processed_commit ?? job.data.beforeSha;
 
-            const { regenerated, prLink } = await handleWebhooks(job.data.userId, job.data.repoId, jobId, repoPath, before, job.data.afterSha, job.data.ref, job.data.installationId, authenticatedCloneUrl);
+                const { regenerated, prLink } = await handleWebhooks(job.data.userId, job.data.repoId, jobId, repoPath, before, job.data.afterSha, job.data.ref, job.data.installationId, authenticatedCloneUrl);
 
-            if(!regenerated) {
+                if(!regenerated) {
+                    await prisma.repo.update({
+                        where: { id: job.data.repoId },
+                        data: { last_processed_commit: job.data.afterSha }
+                    }).catch(err => console.error("[WebhookWorker] Failed to update last_processed_commit:", err));
+                    return;
+                }
+
                 await prisma.repo.update({
                     where: { id: job.data.repoId },
                     data: { last_processed_commit: job.data.afterSha }
                 }).catch(err => console.error("[WebhookWorker] Failed to update last_processed_commit:", err));
-                return;
-            }
 
-            await prisma.repo.update({
-                where: { id: job.data.repoId },
-                data: { last_processed_commit: job.data.afterSha }
-            }).catch(err => console.error("[WebhookWorker] Failed to update last_processed_commit:", err));
+                await BillingService.deductCredit(
+                    job.data.userId,
+                    10,
+                    jobId,
+                    `Docs update generation for commit ${job.data.afterSha}`
+                );
 
-            await BillingService.deductCredit(
-                job.data.userId,
-                10,
-                jobId,
-                `Docs update generation for commit ${job.data.afterSha}`
-            );
-
-            console.log("[Webhook worker] docs regenerated successfully, check out at ", prLink);
-
+                console.log("[Webhook worker] docs regenerated successfully, check out at ", prLink);
+            });
         }
         catch (err) {
             console.error(`[Push-Classify-Worker] Job (ID: ${job.data.docJobId}) failed:`, err);

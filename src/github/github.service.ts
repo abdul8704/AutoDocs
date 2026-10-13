@@ -10,6 +10,7 @@ import { CleanupJobData, PushClassifyJobData } from "../queue/types.queue";
 import path from "path";
 import { ScopedCacheService } from "../LLM/llm.cache.service";
 import { BillingService } from "../billing/billing.service";
+import { forgetRepo } from "../storage/diskQuota.service";
 
 export interface PRPayload {
     repoOwner: string;
@@ -23,10 +24,11 @@ export interface PRPayload {
     filesToCommit: Array<{ path: string; content: string }>;
 }
 
-let git: SimpleGit = simpleGit();
+// NOTE: each helper creates its own SimpleGit instance. A shared module-level instance
+// was previously reassigned per call, which let concurrent jobs run git in the wrong repo.
 
 export const fetchLocalChanges = async (repoId: string, ref: string) => {
-    git = simpleGit(constructPath(repoId));
+    const git = simpleGit(constructPath(repoId));
     const branch = ref ? ref.replace("refs/heads/", "") : "";
 
     try {
@@ -48,7 +50,7 @@ export const fetchLocalChanges = async (repoId: string, ref: string) => {
 }
 
 export const pullChanges = async (repoPath: string) => {
-    git = simpleGit(repoPath);
+    const git = simpleGit(repoPath);
     await git.pull("origin");
     
     console.log("remote changes pulled successfully");
@@ -57,7 +59,7 @@ export const pullChanges = async (repoPath: string) => {
     return sha.trim();
 }
 export const mergeChanges = async (repoPath: string, branch: string) => {
-    git = simpleGit(repoPath);
+    const git = simpleGit(repoPath);
     await git.checkout(branch);
     await git.merge([`origin/${branch}`]);
     console.log("remote changes merged successfully");
@@ -69,7 +71,7 @@ export const cloneNewRepo = async (cloneUrl: string, repoPath: string, cloneMode
     console.log(`Cloning start: ${Date.now()} in ${cloneMode} mode`);
 
     await mkdir(rootPath, { recursive: true });
-    git = simpleGit(rootPath);
+    const git = simpleGit(rootPath);
 
     if (cloneMode == "shallow") {
         await git.clone(cloneUrl, repoPath, [
@@ -84,8 +86,7 @@ export const cloneNewRepo = async (cloneUrl: string, repoPath: string, cloneMode
     console.log(`✅ Successfully cloned: ${repoPath}`);
     console.log(`Cloning end: ${Date.now()}`);
 
-    git = simpleGit(repoPath);
-    const sha = await git.revparse(["HEAD"]);
+    const sha = await simpleGit(repoPath).revparse(["HEAD"]);
 
     return sha.trim();
 }
@@ -339,6 +340,7 @@ export const deleteRepo = async (userId: string, repoId: string) => {
     const directPath = constructPath(repoId);
     rmPromises.push(rm(directPath, { recursive: true, force: true }).catch(() => null));
     await Promise.all(rmPromises);
+    await forgetRepo(repoId, ...repos.map((r) => r.id));
 
     // 4. Delete from Repo table ONLY (LLMCache, LLMLog, DocsUpdateJob, CreditLedger are retained)
     await prisma.repo.deleteMany({
